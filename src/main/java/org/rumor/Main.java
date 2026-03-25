@@ -1,26 +1,22 @@
 package org.rumor;
 
-import org.rumor.exchange.Exchange;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.NodeId;
 import org.rumor.gossip.VersionedValue;
-import org.rumor.node.NodeConfig;
 import org.rumor.node.NodeType;
-import org.rumor.node.RumorNode;
+import org.rumor.node.Rumor;
+import org.rumor.node.RumorConfig;
+import org.rumor.service.RService;
+import org.rumor.service.RequestState;
+import org.rumor.service.ServiceResponse;
 
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.Set;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 /**
- * TODO: move node picking logic inside messafe handlers itself
- * 
- */
-/**
- *
  *   # Start a master(seed+eviction) node on port 7001
  *   mvn exec:java -Dexec.args="--port 7001 --type master"
  *
@@ -29,47 +25,39 @@ import java.util.Scanner;
  *
  * Console commands:
  *   ls       - Show network topology (all known nodes, heartbeat, state)
- *   hello    - Send a hello exchange to the best available node
+ *   hello    - Send a hello request to the best available node
  *   quit     - Shut down this node
  */
 public class Main {
 
-    public static void main(String[] args) throws Exception {
-        NodeConfig config = parseArgs(args);
-        RumorNode node = new RumorNode(config);
-
-        // Register the "hello" exchange type — all nodes will discover and offer this
-        node.registerExchange("hello", (metadata, exchange) -> {
-            String request = new String(metadata, StandardCharsets.UTF_8);
+    static class HelloService extends RService {
+        @Override
+        public void serve(byte[] request, ServiceResponse response) {
+            String message = new String(request, StandardCharsets.UTF_8);
             System.out.println();
-            System.out.println(">> Incoming 'hello' exchange from remote peer: " + request);
+            System.out.println(">> Incoming hello request: " + message);
 
-            try {
-                InputStream in = exchange.getInputStream();
-                byte[] data = in.readAllBytes();
-                String message = new String(data, StandardCharsets.UTF_8);
-                System.out.println(">> Received: " + message);
+            String reply = "Hello back! Got your message: " + message;
+            response.write(reply.getBytes(StandardCharsets.UTF_8));
+            System.out.println(">> Sent response");
+            System.out.print("rumor> ");
+        }
+    }
 
-                OutputStream out = exchange.getOutputStream();
-                String response = "Hello back from " + node.localId() + "! Got your message.";
-                out.write(response.getBytes(StandardCharsets.UTF_8));
-                out.close();
+    public static void main(String[] args) throws Exception {
+        RumorConfig config = parseArgs(args);
+        Rumor rumor = new Rumor(config);
 
-                System.out.println(">> Sent response back");
-                System.out.print("rumor> ");
-            } catch (Exception e) {
-                System.err.println(">> Exchange error: " + e.getMessage());
-            }
-        });
+        HelloService helloService = new HelloService();
+        rumor.register(helloService);
 
-        node.start();
+        rumor.start();
 
         System.out.println();
-        System.out.println("Node " + node.localId() + " (" + config.nodeType() + ") is running.");
+        System.out.println("Node " + rumor.localId() + " (" + config.nodeType() + ") is running.");
         System.out.println("Commands: ls, hello, quit");
         System.out.println();
 
-        // Interactive console loop
         Scanner scanner = new Scanner(System.in);
         while (true) {
             System.out.print("rumor> ");
@@ -78,10 +66,10 @@ public class Main {
 
             switch (line) {
                 case "" -> {}
-                case "ls" -> printTopology(node);
-                case "hello" -> sendHello(node);
+                case "ls" -> printTopology(rumor);
+                case "hello" -> sendHello(rumor, helloService);
                 case "quit", "exit" -> {
-                    node.stop();
+                    rumor.stop();
                     System.out.println("Goodbye.");
                     return;
                 }
@@ -91,8 +79,39 @@ public class Main {
         }
     }
 
-    private static void printTopology(RumorNode node) {
-        Map<NodeId, EndpointState> states = node.getClusterState();
+    private static void sendHello(Rumor rumor, HelloService helloService) {
+        byte[] request = ("Hello from " + rumor.localId() + "!").getBytes(StandardCharsets.UTF_8);
+        StringBuilder responseAccumulator = new StringBuilder();
+        CountDownLatch done = new CountDownLatch(1);
+        //This can be ran on a separate thread from ui so that 
+        //ui does not freez as this can take longer
+        helloService.request(
+                request,
+                (data) -> responseAccumulator.append(new String(data, StandardCharsets.UTF_8)),
+                (state) -> {
+                    switch (state) {
+                        case PROCESSING -> System.out.println("Request sent, waiting for response...");
+                        case SUCCEEDED -> {
+                            System.out.println("Response: " + responseAccumulator);
+                            done.countDown();
+                        }
+                        case FAILED -> {
+                            System.out.println("Request failed.");
+                            done.countDown();
+                        }
+                    }
+                }
+        );
+
+        try {
+            done.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void printTopology(Rumor rumor) {
+        Map<NodeId, EndpointState> states = rumor.getClusterState();
         System.out.println();
         System.out.printf("%-25s %-8s %-10s %-10s %s%n",
                 "NODE", "TYPE", "STATUS", "HEARTBEAT", "APP STATE");
@@ -104,87 +123,27 @@ public class Main {
 
             String type = getAppValue(state, "NODE_TYPE", "?");
             String status = getAppValue(state, "STATUS", "?");
-            String self = id.equals(node.localId()) ? " (self)" : "";
+            String self = id.equals(rumor.localId()) ? " (self)" : "";
 
-            // Collect extra app state keys (skip NODE_TYPE, STATUS, and EXCHANGES)
             StringBuilder extra = new StringBuilder();
             for (var app : state.appStates().entrySet()) {
                 String key = app.getKey();
-                if (!key.equals("NODE_TYPE") && !key.equals("STATUS") && !key.equals("EXCHANGES")) {
+                if (!key.equals("NODE_TYPE") && !key.equals("STATUS") && !key.equals("SERVICES")) {
                     if (!extra.isEmpty()) extra.append(", ");
                     extra.append(key).append("=").append(app.getValue().value());
                 }
             }
 
-            // Show exchange types offered by this node
-            VersionedValue exchangesVv = state.getAppState("EXCHANGES");
-            String exchanges = (exchangesVv != null && !exchangesVv.value().isEmpty())
-                    ? exchangesVv.value() : "-";
+            VersionedValue servicesVv = state.getAppState("SERVICES");
+            String services = (servicesVv != null && !servicesVv.value().isEmpty())
+                    ? servicesVv.value() : "-";
             if (!extra.isEmpty()) extra.append(", ");
-            extra.append("exchanges=[").append(exchanges).append("]");
+            extra.append("services=[").append(services).append("]");
 
             System.out.printf("%-25s %-8s %-10s %-10d %s%s%n",
                     id, type, status, state.heartbeatVersion(), extra, self);
         }
         System.out.println();
-    }
-
-    private static final Set<String> INFRA_TYPES = Set.of("SEED", "MASTER", "EVICTION");
-
-    private static void sendHello(RumorNode node) {
-        // Pick the best node: prefer BASIC nodes over infrastructure (seed/master/eviction),
-        // then highest heartbeat (most recently active), exclude self
-        NodeId bestPeer = null;
-        long bestHeartbeat = -1;
-        boolean bestIsBasic = false;
-
-        for (var entry : node.getClusterState().entrySet()) {
-            NodeId id = entry.getKey();
-            if (id.equals(node.localId())) continue;
-
-            EndpointState state = entry.getValue();
-            String status = getAppValue(state, "STATUS", "");
-            if (!"ALIVE".equals(status)) continue;
-
-            String nodeType = getAppValue(state, "NODE_TYPE", "");
-            boolean isBasic = !INFRA_TYPES.contains(nodeType);
-
-            // Prefer basic nodes; among same tier, pick highest heartbeat
-            if (isBasic && !bestIsBasic) {
-                bestPeer = id;
-                bestHeartbeat = state.heartbeatVersion();
-                bestIsBasic = true;
-            } else if (isBasic == bestIsBasic && state.heartbeatVersion() > bestHeartbeat) {
-                bestPeer = id;
-                bestHeartbeat = state.heartbeatVersion();
-            }
-        }
-
-        if (bestPeer == null) {
-            System.out.println("No active peers available. Wait for gossip to discover nodes.");
-            return;
-        }
-
-        System.out.println("Sending hello exchange to " + bestPeer + "...");
-
-        final NodeId target = bestPeer;
-        try {
-            byte[] metadata = ("HELLO from " + node.localId()).getBytes(StandardCharsets.UTF_8);
-            Exchange exchange = node.startExchange(target, "hello", metadata);
-
-            OutputStream out = exchange.getOutputStream();
-            String message = "Hello World from " + node.localId() + "!";
-            out.write(message.getBytes(StandardCharsets.UTF_8));
-            out.close();
-
-            InputStream in = exchange.getInputStream();
-            byte[] responseBytes = in.readAllBytes();
-            String response = new String(responseBytes, StandardCharsets.UTF_8);
-            System.out.println("Response from " + target + ": " + response);
-
-        } catch (Exception e) {
-            System.out.println("Exchange failed: " + e.getMessage());
-        }
     }
 
     private static String getAppValue(EndpointState state, String key, String defaultVal) {
@@ -194,8 +153,8 @@ public class Main {
 
     // --- Argument parsing ---
 
-    private static NodeConfig parseArgs(String[] args) {
-        NodeConfig config = new NodeConfig();
+    private static RumorConfig parseArgs(String[] args) {
+        RumorConfig config = new RumorConfig();
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -206,6 +165,7 @@ public class Main {
                     String[] parts = args[++i].split(":");
                     config.addSeed(parts[0], Integer.parseInt(parts[1]));
                 }
+                case "--threads" -> config.serviceThreadPoolSize(Integer.parseInt(args[++i]));
                 case "--help" -> {
                     printUsage();
                     System.exit(0);
@@ -230,6 +190,7 @@ public class Main {
                   --host, -h <host>                          Listen host (default: 127.0.0.1)
                   --type, -t <seed|basic|eviction|master>    Node type (default: basic)
                   --seed, -s <host:port>                     Seed node address (repeatable)
+                  --threads <n>                              Service thread pool size (default: 4)
                   --help                                     Show this help
 
                 Node types:

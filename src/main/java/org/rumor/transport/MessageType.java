@@ -8,9 +8,9 @@ public enum MessageType {
     GOSSIP_ACK     (0x02),
     GOSSIP_ACK2    (0x04),
 
-    EXCHANGE_START (0x10),
-    EXCHANGE_DATA  (0x11),
-    EXCHANGE_END   (0x12);
+    SERVICE_REQUEST (0x10),
+    SERVICE_DATA    (0x11),
+    SERVICE_END     (0x12);
 
     private final int code;
 

@@ -74,6 +74,13 @@ public class EvictionService {
                 if (prev == null || prev.heartbeatVersion < currentHb) {
                     // Heartbeat advanced — node is genuinely alive
                     lastSeen.put(nodeId, new HeartbeatSnapshot(currentHb, now));
+
+                    // If node was DOWN, mark it back ALIVE
+                    VersionedValue status = state.getAppState("STATUS");
+                    if (status != null && "DOWN".equals(status.value())) {
+                        gossipService.setRemoteState(nodeId, "STATUS", "ALIVE");
+                        log.info("Node {} marked ALIVE (heartbeat advanced to {})", nodeId, currentHb);
+                    }
                 } else {
                     // Heartbeat has NOT advanced since last snapshot
                     long staleForMs = now - prev.observedAtMs;

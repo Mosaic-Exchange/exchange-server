@@ -132,29 +132,44 @@ public class GossipService {
     }
 
     private NodeId pickGossipTarget() {
-        // All known peers (discovered via gossip), excluding self
-        Set<NodeId> peers = new HashSet<>(endpointStateMap.keySet());
-        peers.remove(localNode);
+        List<NodeId> live = new ArrayList<>();
+        List<NodeId> down = new ArrayList<>();
+
+        for (var entry : endpointStateMap.entrySet()) {
+            NodeId id = entry.getKey();
+            if (id.equals(localNode)) continue;
+
+            VersionedValue status = entry.getValue().getAppState("STATUS");
+            if (status != null && "DOWN".equals(status.value())) {
+                down.add(id);
+            } else {
+                live.add(id);
+            }
+        }
 
         // If we don't know anyone yet, bootstrap from a seed
-        if (peers.isEmpty()) {
+        if (live.isEmpty() && down.isEmpty()) {
             if (seeds.isEmpty()) return null;
             List<NodeId> shuffled = new ArrayList<>(seeds);
             Collections.shuffle(shuffled);
             return shuffled.getFirst();
         }
 
-        // Once we have peers, gossip with any random known node.
-        // 10% of the time still contact a seed for consistency.
+        // 10% of the time still contact a seed for consistency
         if (!seeds.isEmpty() && ThreadLocalRandom.current().nextInt(10) == 0) {
             List<NodeId> shuffled = new ArrayList<>(seeds);
             Collections.shuffle(shuffled);
             return shuffled.getFirst();
         }
 
-        List<NodeId> list = new ArrayList<>(peers);
-        Collections.shuffle(list);
-        return list.getFirst();
+        // 10% of the time gossip with a DOWN node to detect recovery
+        if (!down.isEmpty() && (live.isEmpty() || ThreadLocalRandom.current().nextInt(10) == 0)) {
+            Collections.shuffle(down);
+            return down.getFirst();
+        }
+
+        Collections.shuffle(live);
+        return live.getFirst();
     }
 
     // --- Handle incoming gossip messages ---
