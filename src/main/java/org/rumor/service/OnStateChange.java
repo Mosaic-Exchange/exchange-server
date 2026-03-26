@@ -2,5 +2,5 @@ package org.rumor.service;
 
 @FunctionalInterface
 public interface OnStateChange {
-    void accept(RequestState state);
+    void accept(RequestEvent event);
 }

@@ -15,9 +15,10 @@ public class RumorConfig {
     private NodeType nodeType = NodeType.BASIC;
     private List<NodeId> seeds = new ArrayList<>();
     private long gossipIntervalMs = 1000;
-    private int serviceThreadPoolSize = 4;
     private int maxRequestBytes = 1_048_576;   // 1 MB
     private int maxResponseBytes = 10_485_760; // 10 MB
+    private long requestTimeoutMs = 30_000;    // overall max time for a request
+    private long requestIdleTimeoutMs = 10_000; // max time between data messages
 
     public RumorConfig host(String host) {
         this.host = host;
@@ -44,11 +45,6 @@ public class RumorConfig {
         return this;
     }
 
-    public RumorConfig serviceThreadPoolSize(int size) {
-        this.serviceThreadPoolSize = size;
-        return this;
-    }
-
     public RumorConfig maxRequestBytes(int maxRequestBytes) {
         this.maxRequestBytes = maxRequestBytes;
         return this;
@@ -59,14 +55,25 @@ public class RumorConfig {
         return this;
     }
 
+    public RumorConfig requestTimeoutMs(long ms) {
+        this.requestTimeoutMs = ms;
+        return this;
+    }
+
+    public RumorConfig requestIdleTimeoutMs(long ms) {
+        this.requestIdleTimeoutMs = ms;
+        return this;
+    }
+
     public String host() { return host; }
     public int port() { return port; }
     public NodeType nodeType() { return nodeType; }
     public List<NodeId> seeds() { return seeds; }
     public long gossipIntervalMs() { return gossipIntervalMs; }
-    public int serviceThreadPoolSize() { return serviceThreadPoolSize; }
     public int maxRequestBytes() { return maxRequestBytes; }
     public int maxResponseBytes() { return maxResponseBytes; }
+    public long requestTimeoutMs() { return requestTimeoutMs; }
+    public long requestIdleTimeoutMs() { return requestIdleTimeoutMs; }
 
     public NodeId nodeId() {
         return new NodeId(host, port);

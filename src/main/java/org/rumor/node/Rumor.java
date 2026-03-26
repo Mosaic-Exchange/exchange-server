@@ -43,7 +43,7 @@ public class Rumor {
         this.gossipService = new GossipService(localId, config.seeds(),
                 connectionManager, config.gossipIntervalMs());
         this.serviceManager = new ServiceManager(connectionManager, gossipService,
-                localId, config.serviceThreadPoolSize());
+                localId, config.requestTimeoutMs(), config.requestIdleTimeoutMs());
 
         if (config.nodeType().isEvictor()) {
             this.evictionService = new EvictionService(localId, gossipService,
@@ -61,6 +61,11 @@ public class Rumor {
             String csv = String.join(",", names);
             gossipService.setLocalState("SERVICES", csv);
         });
+        // Publish any services that were registered before start()
+        Set<String> existing = serviceManager.getRegisteredNames();
+        if (!existing.isEmpty()) {
+            gossipService.setLocalState("SERVICES", String.join(",", existing));
+        }
 
         gossipService.start();
         if (evictionService != null) {

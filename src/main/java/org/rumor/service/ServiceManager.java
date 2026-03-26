@@ -20,8 +20,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
- * Manages service registration, request routing, node picking, and
- * dispatches incoming requests to the correct service on a configurable thread pool.
+ * Manages service registration, request routing, and node picking.
+ * Incoming requests are served directly on the calling thread;
+ * applications should offload heavy processing to their own executor
+ * for responsiveness.
  */
 public class ServiceManager {
 
@@ -32,19 +34,25 @@ public class ServiceManager {
     private final NodeId localId;
     private final Map<String, RService> services = new ConcurrentHashMap<>();
     private final AtomicInteger requestIdGenerator = new AtomicInteger(1);
-    private final ExecutorService workerPool;
+    private final ScheduledExecutorService timeoutScheduler;
     private volatile Consumer<Set<String>> onRegistrationChanged;
+
+    private final long requestTimeoutMs;
+    private final long requestIdleTimeoutMs;
 
     // Tracks pending outbound requests (client side)
     private final Map<Integer, PendingRequest> pendingRequests = new ConcurrentHashMap<>();
 
     public ServiceManager(ConnectionManager connectionManager, GossipService gossipService,
-                          NodeId localId, int threadPoolSize) {
+                          NodeId localId,
+                          long requestTimeoutMs, long requestIdleTimeoutMs) {
         this.connectionManager = connectionManager;
         this.gossipService = gossipService;
         this.localId = localId;
-        this.workerPool = Executors.newFixedThreadPool(threadPoolSize, r -> {
-            Thread t = new Thread(r, "service-worker");
+        this.requestTimeoutMs = requestTimeoutMs;
+        this.requestIdleTimeoutMs = requestIdleTimeoutMs;
+        this.timeoutScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "request-timeout");
             t.setDaemon(true);
             return t;
         });
@@ -72,11 +80,10 @@ public class ServiceManager {
      * Send a request to a remote peer offering the named service.
      * Picks a live node automatically via gossip.
      */
-    public void sendRequest(String serviceName, byte[] request,
-                            OnReceive onReceive, OnStateChange onStateChange) {
+    public void sendRequest(String serviceName, byte[] request, OnStateChange onStateChange) {
         NodeId target = pickNode(serviceName);
         if (target == null) {
-            onStateChange.accept(RequestState.FAILED);
+            onStateChange.accept(new RequestEvent.Failed("No live node found offering service '" + serviceName + "'"));
             log.warn("No live node found offering service '{}'", serviceName);
             return;
         }
@@ -88,7 +95,17 @@ public class ServiceManager {
             }
 
             int requestId = requestIdGenerator.getAndIncrement();
-            pendingRequests.put(requestId, new PendingRequest(onReceive, onStateChange));
+            PendingRequest pending = new PendingRequest(requestId, onStateChange);
+            pendingRequests.put(requestId, pending);
+
+            // Schedule overall request timeout
+            pending.overallTimeout = timeoutScheduler.schedule(
+                    () -> timeoutRequest(requestId, "Request timed out (exceeded " + requestTimeoutMs + "ms)"),
+                    requestTimeoutMs, TimeUnit.MILLISECONDS);
+
+            // Schedule idle timeout (time between data messages)
+            pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
+                    () -> timeoutRequest(requestId, "Idle timeout (no data received within " + requestIdleTimeoutMs + "ms)"));
 
             // Build SERVICE_REQUEST payload:
             //   [requestId: 4B][serviceNameLen: 2B][serviceName: NB][requestPayload: NB]
@@ -101,12 +118,21 @@ public class ServiceManager {
             buf.put(request);
 
             channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_REQUEST, payload));
-            onStateChange.accept(RequestState.PROCESSING);
+            onStateChange.accept(new RequestEvent.Processing());
             log.debug("Sent request {} for service '{}' to {}", requestId, serviceName, target);
 
         } catch (Exception e) {
-            onStateChange.accept(RequestState.FAILED);
+            onStateChange.accept(new RequestEvent.Failed("Failed to send request: " + e.getMessage()));
             log.error("Failed to send request for service '{}' to {}", serviceName, target, e);
+        }
+    }
+
+    private void timeoutRequest(int requestId, String reason) {
+        PendingRequest pending = pendingRequests.remove(requestId);
+        if (pending != null) {
+            pending.cancelTimeouts();
+            pending.onStateChange.accept(new RequestEvent.Failed(reason));
+            log.warn("Request {} timed out: {}", requestId, reason);
         }
     }
 
@@ -128,16 +154,14 @@ public class ServiceManager {
 
         RService service = services.get(serviceName);
         if (service != null) {
-            workerPool.submit(() -> {
-                ServiceResponse response = new ServiceResponse(requestId, ctx.channel());
-                try {
-                    service.serve(requestData, response);
-                    response.close();
-                } catch (Exception e) {
-                    log.error("Error serving request {} (service='{}')", requestId, serviceName, e);
-                    response.closeWithError();
-                }
-            });
+            RemoteServiceResponse response = new RemoteServiceResponse(requestId, ctx.channel());
+            try {
+                service.serve(requestData, response);
+                response.close();
+            } catch (Exception e) {
+                log.error("Error serving request {} (service='{}')", requestId, serviceName, e);
+                response.closeWithError();
+            }
         } else {
             log.warn("No service registered for '{}', ignoring request {}", serviceName, requestId);
             // Send error end
@@ -157,7 +181,10 @@ public class ServiceManager {
 
         PendingRequest pending = pendingRequests.get(requestId);
         if (pending != null) {
-            pending.onReceive.accept(data);
+            // Reset idle timeout on each data chunk
+            pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
+                    () -> timeoutRequest(requestId, "Idle timeout (no data received within " + requestIdleTimeoutMs + "ms)"));
+            pending.onStateChange.accept(new RequestEvent.StreamData(data));
         } else {
             log.warn("Received data for unknown request {}", requestId);
         }
@@ -170,10 +197,11 @@ public class ServiceManager {
 
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
+            pending.cancelTimeouts();
             if (status == 0) {
-                pending.onStateChange.accept(RequestState.SUCCEEDED);
+                pending.onStateChange.accept(new RequestEvent.Succeeded());
             } else {
-                pending.onStateChange.accept(RequestState.FAILED);
+                pending.onStateChange.accept(new RequestEvent.Failed("Remote service returned error (status=" + status + ")"));
             }
             log.debug("Request {} completed (status={})", requestId, status);
         } else {
@@ -209,9 +237,33 @@ public class ServiceManager {
     }
 
     public void shutdown() {
-        workerPool.shutdown();
+        timeoutScheduler.shutdown();
+        for (PendingRequest pending : pendingRequests.values()) {
+            pending.cancelTimeouts();
+        }
         pendingRequests.clear();
     }
 
-    private record PendingRequest(OnReceive onReceive, OnStateChange onStateChange) {}
+    private static class PendingRequest {
+        final int requestId;
+        final OnStateChange onStateChange;
+        volatile ScheduledFuture<?> overallTimeout;
+        volatile ScheduledFuture<?> idleTimeout;
+
+        PendingRequest(int requestId, OnStateChange onStateChange) {
+            this.requestId = requestId;
+            this.onStateChange = onStateChange;
+        }
+
+        void resetIdleTimeout(ScheduledExecutorService scheduler, long idleMs, Runnable onTimeout) {
+            ScheduledFuture<?> prev = this.idleTimeout;
+            if (prev != null) prev.cancel(false);
+            this.idleTimeout = scheduler.schedule(onTimeout, idleMs, TimeUnit.MILLISECONDS);
+        }
+
+        void cancelTimeouts() {
+            if (overallTimeout != null) overallTimeout.cancel(false);
+            if (idleTimeout != null) idleTimeout.cancel(false);
+        }
+    }
 }

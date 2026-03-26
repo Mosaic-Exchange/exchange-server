@@ -7,16 +7,17 @@ import org.rumor.node.NodeType;
 import org.rumor.node.Rumor;
 import org.rumor.node.RumorConfig;
 import org.rumor.service.RService;
-import org.rumor.service.RequestState;
+import org.rumor.service.RequestEvent;
 import org.rumor.service.ServiceResponse;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Scanner;
-import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 /**
+ * 
+ *  mvn exec:java -Dexec.args="--port 7001 --type master --host 172.20.10.5"
  *   # Start a master(seed+eviction) node on port 7001
  *   mvn exec:java -Dexec.args="--port 7001 --type master"
  *
@@ -31,6 +32,8 @@ import java.util.concurrent.CountDownLatch;
 public class Main {
 
     static class HelloService extends RService {
+        
+        
         @Override
         public void serve(byte[] request, ServiceResponse response) {
             String message = new String(request, StandardCharsets.UTF_8);
@@ -83,20 +86,22 @@ public class Main {
         byte[] request = ("Hello from " + rumor.localId() + "!").getBytes(StandardCharsets.UTF_8);
         StringBuilder responseAccumulator = new StringBuilder();
         CountDownLatch done = new CountDownLatch(1);
-        //This can be ran on a separate thread from ui so that 
+        //This can be ran on a separate thread from ui so that
         //ui does not freez as this can take longer
-        helloService.request(
+        helloService.dispatch(
                 request,
-                (data) -> responseAccumulator.append(new String(data, StandardCharsets.UTF_8)),
-                (state) -> {
-                    switch (state) {
-                        case PROCESSING -> System.out.println("Request sent, waiting for response...");
-                        case SUCCEEDED -> {
+                (event) -> {
+                    switch (event) {
+                        case RequestEvent.Processing p ->
+                                System.out.println("Request sent, waiting for response...");
+                        case RequestEvent.StreamData d ->
+                                responseAccumulator.append(new String(d.data(), StandardCharsets.UTF_8));
+                        case RequestEvent.Succeeded s -> {
                             System.out.println("Response: " + responseAccumulator);
                             done.countDown();
                         }
-                        case FAILED -> {
-                            System.out.println("Request failed.");
+                        case RequestEvent.Failed f -> {
+                            System.out.println("Request failed: " + f.reason());
                             done.countDown();
                         }
                     }
@@ -165,7 +170,8 @@ public class Main {
                     String[] parts = args[++i].split(":");
                     config.addSeed(parts[0], Integer.parseInt(parts[1]));
                 }
-                case "--threads" -> config.serviceThreadPoolSize(Integer.parseInt(args[++i]));
+                case "--request-timeout" -> config.requestTimeoutMs(Long.parseLong(args[++i]));
+                case "--idle-timeout" -> config.requestIdleTimeoutMs(Long.parseLong(args[++i]));
                 case "--help" -> {
                     printUsage();
                     System.exit(0);
@@ -190,7 +196,8 @@ public class Main {
                   --host, -h <host>                          Listen host (default: 127.0.0.1)
                   --type, -t <seed|basic|eviction|master>    Node type (default: basic)
                   --seed, -s <host:port>                     Seed node address (repeatable)
-                  --threads <n>                              Service thread pool size (default: 4)
+                  --request-timeout <ms>                     Overall request timeout in ms (default: 30000)
+                  --idle-timeout <ms>                        Idle timeout between data messages in ms (default: 10000)
                   --help                                     Show this help
 
                 Node types:
