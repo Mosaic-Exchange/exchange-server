@@ -1,100 +1,12 @@
-currently in the serve method we have StreamResponse
-which makes it diffuclt for local node to use it. we need
-better abstractions.
-
-how do we distinguish between local and remote messages.
-
 we dont want remote requests to run longet than a fixed timeout
+Right now the requests in dispatch and requests and
+bytes we can haeve objcts as well using that we can deseiralize
+before transport.
 
-instead of a ReuquestPriority
+gossip protocol is defeinetly buggy. if seed stops and comes back alive
+it is creating problem. 
 
-package org.rumor.service;
+we need a way for applciation to decide 
+some state that can be synced from the network
 
-import io.netty.channel.Channel;
-import org.rumor.transport.ConnectionManager;
-import org.rumor.transport.MessageType;
-import org.rumor.transport.RumorFrame;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.nio.ByteBuffer;
-
-/**
- * Used by the server side to write response bytes back to the requesting peer.
- * Supports streaming (multiple write calls) or single-shot transfer.
- */
-public class ServiceResponse {
-
-    private static final Logger log = LoggerFactory.getLogger(ServiceResponse.class);
-    private static final int CHUNK_SIZE = 8192;
-
-    private final int requestId;
-    private final Channel channel;
-    private final Object writeMonitor;
-    private boolean closed;
-
-    ServiceResponse(int requestId, Channel channel) {
-        this.requestId = requestId;
-        this.channel = channel;
-        this.writeMonitor = ConnectionManager.getWriteMonitor(channel);
-    }
-
-    public void write(byte[] data) {
-        if (closed) throw new IllegalStateException("Response already closed");
-
-        int remaining = data.length;
-        int offset = 0;
-
-        while (remaining > 0) {
-            int chunkLen = Math.min(remaining, CHUNK_SIZE);
-
-            synchronized (writeMonitor) {
-                while (!channel.isWritable()) {
-                    if (!channel.isActive()) {
-                        throw new IllegalStateException("Channel closed");
-                    }
-                    try {
-                        writeMonitor.wait();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("Interrupted while writing response", e);
-                    }
-                }
-            }
-
-            byte[] framePayload = new byte[4 + chunkLen];
-            ByteBuffer.wrap(framePayload).putInt(requestId);
-            System.arraycopy(data, offset, framePayload, 4, chunkLen);
-
-            channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_DATA, framePayload));
-
-            offset += chunkLen;
-            remaining -= chunkLen;
-        }
-    }
-
-    public void close() {
-        if (closed) return;
-        closed = true;
-
-        // Send SERVICE_END with status=0 (success)
-        byte[] payload = new byte[5];
-        ByteBuffer buf = ByteBuffer.wrap(payload);
-        buf.putInt(requestId);
-        buf.put((byte) 0);
-        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_END, payload));
-        log.debug("Response closed for request {}", requestId);
-    }
-
-    void closeWithError() {
-        if (closed) return;
-        closed = true;
-
-        byte[] payload = new byte[5];
-        ByteBuffer buf = ByteBuffer.wrap(payload);
-        buf.putInt(requestId);
-        buf.put((byte) 1);
-        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_END, payload));
-        log.debug("Response closed with error for request {}", requestId);
-    }
-}
+we can sync in states like types of adapter available , types of llm models runnong

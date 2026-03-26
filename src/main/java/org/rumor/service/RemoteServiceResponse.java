@@ -12,6 +12,15 @@ import java.nio.ByteBuffer;
 /**
  * Writes response bytes back to a remote requesting peer over a Netty channel.
  * Supports streaming (multiple write calls) or single-shot transfer.
+ *
+ * <p><b>Backpressure:</b> When the caller is on a non-event-loop thread,
+ * this handler blocks with {@code wait()} until the channel is writable.
+ * When the caller is on the Netty event loop (e.g. during {@code serve()}),
+ * blocking would deadlock — so writes proceed without waiting. Netty's
+ * internal buffering and TCP flow control still provide backpressure at
+ * the transport level, but memory usage may spike for very large responses.
+ * Services performing large streaming writes should offload to their own
+ * thread to benefit from application-level backpressure.
  */
 class RemoteServiceResponse implements ServiceResponse {
 
@@ -36,20 +45,31 @@ class RemoteServiceResponse implements ServiceResponse {
         int remaining = data.length;
         int offset = 0;
 
+        boolean onEventLoop = channel.eventLoop().inEventLoop();
+
         while (remaining > 0) {
             int chunkLen = Math.min(remaining, CHUNK_SIZE);
 
-            synchronized (writeMonitor) {
-                while (!channel.isWritable()) {
-                    if (!channel.isActive()) {
-                        throw new IllegalStateException("Channel closed");
+            if (!onEventLoop) {
+                // Safe to block — we won't starve the event loop
+                synchronized (writeMonitor) {
+                    while (!channel.isWritable()) {
+                        if (!channel.isActive()) {
+                            throw new IllegalStateException("Channel closed");
+                        }
+                        try {
+                            writeMonitor.wait();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException("Interrupted while writing response", e);
+                        }
                     }
-                    try {
-                        writeMonitor.wait();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new IllegalStateException("Interrupted while writing response", e);
-                    }
+                }
+            } else {
+                // On event loop — blocking would deadlock.
+                // Just check if the channel is still alive.
+                if (!channel.isActive()) {
+                    throw new IllegalStateException("Channel closed");
                 }
             }
 

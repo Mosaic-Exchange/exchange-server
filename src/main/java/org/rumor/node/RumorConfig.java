@@ -16,9 +16,10 @@ public class RumorConfig {
     private List<NodeId> seeds = new ArrayList<>();
     private long gossipIntervalMs = 1000;
     private int maxRequestBytes = 1_048_576;   // 1 MB
-    private int maxResponseBytes = 10_485_760; // 10 MB
-    private long requestTimeoutMs = 30_000;    // overall max time for a request
-    private long requestIdleTimeoutMs = 10_000; // max time between data messages
+    private int maxResponseBytes = 268_435_456; // 256 MB
+    private long requestTimeoutMs = 300_000;    // overall max time for a request (5 min)
+    private long requestIdleTimeoutMs = 60_000; // max time between data messages (60s)
+
 
     public RumorConfig host(String host) {
         this.host = host;
@@ -65,6 +66,8 @@ public class RumorConfig {
         return this;
     }
 
+
+
     public String host() { return host; }
     public int port() { return port; }
     public NodeType nodeType() { return nodeType; }
@@ -74,6 +77,9 @@ public class RumorConfig {
     public int maxResponseBytes() { return maxResponseBytes; }
     public long requestTimeoutMs() { return requestTimeoutMs; }
     public long requestIdleTimeoutMs() { return requestIdleTimeoutMs; }
+
+
+
 
     public NodeId nodeId() {
         return new NodeId(host, port);
