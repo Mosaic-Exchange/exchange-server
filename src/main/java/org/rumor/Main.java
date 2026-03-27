@@ -109,7 +109,6 @@ public class Main {
 
     private static void sendHello(Rumor rumor, HelloService helloService) {
         byte[] request = ("Hello from " + rumor.localId() + "!").getBytes(StandardCharsets.UTF_8);
-        StringBuilder responseAccumulator = new StringBuilder();
         CountDownLatch done = new CountDownLatch(1);
         //This can be ran on a separate thread from ui so that
         //ui does not freez as this can take longer
@@ -119,16 +118,17 @@ public class Main {
                     switch (event) {
                         case RequestEvent.Processing p ->
                                 System.out.println("Request sent, waiting for response...");
-                        case RequestEvent.StreamData d ->
-                                responseAccumulator.append(new String(d.data(), StandardCharsets.UTF_8));
                         case RequestEvent.Succeeded s -> {
-                            System.out.println("Response: " + responseAccumulator);
+                            String reply = s.data() != null
+                                    ? new String(s.data(), StandardCharsets.UTF_8) : "";
+                            System.out.println("Response: " + reply);
                             done.countDown();
                         }
                         case RequestEvent.Failed f -> {
                             System.out.println("Request failed: " + f.reason());
                             done.countDown();
                         }
+                        default -> {}
                     }
                 }
         );

@@ -11,4 +11,48 @@ some state that can be synced from the network
 
 we can sync in states like types of adapter available , types of llm models runnong
 
+ServiceResponse<YourCustomClass> response
 
+RService.request will return YourCustomClass with SUCCEEDED
+similarly for types output
+
+we also need a message a message from the receing end sayign that
+they no longer need that service;_prompt> hello there
+Sending to remote peer...
+
+Inference failed: Idle timeout (no stream data received within 60000ms)
+rumor> 12:55:03 [request-timeout] WARN ServiceManager - Request 2 timed out: Idle timeout (no stream data received within 60000ms)
+12:55:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
+12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream end for unknown request 2
+
+instead of having a Separate state publisher I should 
+look into ways of using annotation. 
+
+
+annotation based processing of states instead of Statepublisher
+ability to have as many state-keys as you would like
+also each key will be appended with the class name to maint uniqueness

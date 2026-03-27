@@ -4,40 +4,54 @@ import java.util.Map;
 import java.util.function.Predicate;
 
 /**
- * Base class for request/response services in the Rumor framework.
+ * Base class for streaming services in the Rumor framework.
  *
  * <p>Extend this class and implement {@link #serve(byte[], ServiceResponse)} to handle
- * incoming requests from remote peers. Use {@link #dispatch(byte[], OnStateChange)}
- * to invoke this service on a remote peer that offers it.
+ * incoming requests that require streaming a potentially large amount of data.
+ * Use {@link #dispatch(byte[], OnStateChange)} to invoke this service on a remote
+ * peer that offers it.
  *
- * <p><b>Single-write contract:</b> {@link ServiceResponse#write(byte[])} may be
- * called <em>at most once</em>. Calling it a second time throws
- * {@link IllegalStateException}. Use {@link ServiceResponse#fail(byte[])} to
- * signal an error. For multi-write streaming, use {@link RStreamingService}.
+ * <p><b>Key differences from {@link RService}:</b>
+ * <ul>
+ *   <li>{@code serve()} runs on a <em>dedicated thread</em>, not the Netty I/O
+ *       thread — blocking operations are safe.</li>
+ *   <li>The {@link ServiceResponse#write(byte[])} method may be called
+ *       multiple times to stream data in chunks.</li>
+ *   <li>Only one streaming service may be active on a node at a time.</li>
+ *   <li>Backpressure is enforced: {@code write()} blocks when the channel
+ *       is not writable.</li>
+ * </ul>
  *
- * <p><b>Threading:</b> {@code serve()} is called on the framework's Netty I/O
- * thread. <em>Do not perform blocking operations</em> (e.g. Thread.sleep,
- * blocking I/O, locks held for extended periods) inside {@code serve()} —
- * doing so will stall the event loop and may deadlock backpressure handling.
- * For long-running or blocking work, use {@link RStreamingService} instead.
+ * <p><b>Wire protocol (transparent to the service):</b>
+ * <ol>
+ *   <li>Client sends {@code SERVICE_REQUEST}</li>
+ *   <li>Server responds with {@code SERVICE_INIT_STREAM}</li>
+ *   <li>Client acknowledges with {@code SERVICE_STREAM_START}</li>
+ *   <li>Server sends {@code SERVICE_STREAM_DATA} chunks until done</li>
+ *   <li>Server sends {@code SERVICE_STREAM_END} (success) or
+ *       {@code SERVICE_STREAM_ERROR} (failure)</li>
+ * </ol>
  *
  * <p>The service is identified by the simple class name of the subclass.
  *
  * <p>Optionally implement {@link StatePublisher} to automatically publish
  * application state into the gossip protocol.
  */
-public abstract class RService {
+public abstract class RStreamingService {
 
     private ServiceManager manager;
 
     /**
-     * Handle an incoming request from a remote peer.
+     * Handle an incoming request from a remote peer by streaming a response.
      *
-     * <p>{@link ServiceResponse#write(byte[])} may be called at most once.
-     * Use {@link ServiceResponse#fail(byte[])} to signal an error to the requester.
+     * <p>This method is called on a dedicated thread (not the Netty I/O thread),
+     * so blocking operations are safe. Call {@link ServiceResponse#write(byte[])}
+     * as many times as needed to stream data. The framework calls
+     * {@link ServiceResponse#close()} when this method returns normally,
+     * and {@link ServiceResponse#fail(byte[])} if it throws.
      *
      * @param request  the full request bytes from the remote peer
-     * @param response write response bytes here (single write); call fail() on error
+     * @param response write response bytes here; may be called multiple times
      */
     public abstract void serve(byte[] request, ServiceResponse response);
 
@@ -48,7 +62,7 @@ public abstract class RService {
      * @param request       request bytes sent to the remote peer
      * @param onStateChange called when request events occur:
      *                      {@link RequestEvent.Processing} – request sent,
-     *                      {@link RequestEvent.StreamData} – response data arrived,
+     *                      {@link RequestEvent.StreamData} – a chunk of response data arrived,
      *                      {@link RequestEvent.Succeeded} – completed successfully,
      *                      {@link RequestEvent.Failed} – failed (includes reason)
      */
@@ -78,14 +92,14 @@ public abstract class RService {
      * {@link #dispatch(byte[], OnStateChange)}.
      *
      * <p>The {@link #serve(byte[], ServiceResponse)} method is called on the
-     * caller's thread. Single-write is enforced.
+     * caller's thread. If that is undesirable, wrap this call in your own executor.
      *
      * @param request       request bytes passed directly to {@link #serve}
      * @param onStateChange called when request events occur (same contract as dispatch)
      */
     public void request(byte[] request, OnStateChange onStateChange) {
         onStateChange.accept(new RequestEvent.Processing());
-        LocalServiceResponse response = new LocalServiceResponse(onStateChange, true);
+        LocalServiceResponse response = new LocalServiceResponse(onStateChange, false);
         try {
             serve(request, response);
             response.close();

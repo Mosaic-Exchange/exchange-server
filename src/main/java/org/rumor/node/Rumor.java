@@ -7,6 +7,7 @@ import org.rumor.gossip.EvictionService;
 import org.rumor.gossip.GossipService;
 import org.rumor.gossip.NodeId;
 import org.rumor.service.RService;
+import org.rumor.service.RStreamingService;
 import org.rumor.service.ServiceManager;
 import org.rumor.transport.*;
 import org.slf4j.Logger;
@@ -86,9 +87,16 @@ public class Rumor {
     }
 
     /**
-     * Register a service. The service name is derived from the class name.
+     * Register a request/response service.
      */
     public void register(RService service) {
+        serviceManager.register(service);
+    }
+
+    /**
+     * Register a streaming service.
+     */
+    public void register(RStreamingService service) {
         serviceManager.register(service);
     }
 
@@ -120,10 +128,17 @@ public class Rumor {
             case GOSSIP_ACK    -> gossipService.handleGossipAck(ctx, frame.payload());
             case GOSSIP_ACK2   -> gossipService.handleGossipAck2(ctx, frame.payload());
 
-            case SERVICE_REQUEST -> serviceManager.handleServiceRequest(ctx, frame.payload());
-            case SERVICE_DATA    -> serviceManager.handleServiceData(ctx, frame.payload());
-            case SERVICE_END     -> serviceManager.handleServiceEnd(ctx, frame.payload());
-            case SERVICE_ERROR   -> serviceManager.handleServiceError(ctx, frame.payload());
+            // RService (request/response)
+            case SERVICE_REQUEST  -> serviceManager.handleServiceRequest(ctx, frame.payload());
+            case SERVICE_RESPONSE -> serviceManager.handleServiceResponse(ctx, frame.payload());
+            case SERVICE_ERROR    -> serviceManager.handleServiceError(ctx, frame.payload());
+
+            // RStreamingService (handshake + streamed data)
+            case SERVICE_INIT_STREAM  -> serviceManager.handleServiceInitStream(ctx, frame.payload());
+            case SERVICE_STREAM_START -> serviceManager.handleServiceStreamStart(ctx, frame.payload());
+            case SERVICE_STREAM_DATA  -> serviceManager.handleServiceStreamData(ctx, frame.payload());
+            case SERVICE_STREAM_END   -> serviceManager.handleServiceStreamEnd(ctx, frame.payload());
+            case SERVICE_STREAM_ERROR -> serviceManager.handleServiceStreamError(ctx, frame.payload());
         }
     }
 

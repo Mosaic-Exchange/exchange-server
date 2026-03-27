@@ -7,11 +7,18 @@ public enum MessageType {
     GOSSIP_DIGEST  (0x01),
     GOSSIP_ACK     (0x02),
     GOSSIP_ACK2    (0x04),
-    
-    SERVICE_REQUEST (0x10),
-    SERVICE_DATA    (0x11),
-    SERVICE_END     (0x12),
-    SERVICE_ERROR   (0x13);
+
+    // --- RService (request / single-response) ---
+    SERVICE_REQUEST  (0x10),
+    SERVICE_RESPONSE (0x14),
+    SERVICE_ERROR    (0x13),
+
+    // --- RStreamingService (handshake + streamed data) ---
+    SERVICE_INIT_STREAM   (0x20),
+    SERVICE_STREAM_START  (0x21),
+    SERVICE_STREAM_DATA   (0x22),
+    SERVICE_STREAM_END    (0x23),
+    SERVICE_STREAM_ERROR  (0x24);
 
     private final int code;
 

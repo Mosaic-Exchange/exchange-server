@@ -1,7 +1,6 @@
 package org.rumor.service;
 
 import io.netty.channel.Channel;
-import org.rumor.transport.ConnectionManager;
 import org.rumor.transport.MessageType;
 import org.rumor.transport.RumorFrame;
 import org.slf4j.Logger;
@@ -10,78 +9,38 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 
 /**
- * Writes response bytes back to a remote requesting peer over a Netty channel.
- * Supports streaming (multiple write calls) or single-shot transfer.
+ * Single-write response for {@link RService} requests.
  *
- * <p><b>Backpressure:</b> When the caller is on a non-event-loop thread,
- * this handler blocks with {@code wait()} until the channel is writable.
- * When the caller is on the Netty event loop (e.g. during {@code serve()}),
- * blocking would deadlock — so writes proceed without waiting. Netty's
- * internal buffering and TCP flow control still provide backpressure at
- * the transport level, but memory usage may spike for very large responses.
- * Services performing large streaming writes should offload to their own
- * thread to benefit from application-level backpressure.
+ * <p>{@link #write(byte[])} may be called at most once and buffers the data.
+ * {@link #close()} sends a single {@code SERVICE_RESPONSE} frame with the
+ * buffered payload (or an empty payload if {@code write} was never called).
+ * {@link #fail(byte[])} sends a {@code SERVICE_ERROR} frame instead.
+ *
+ * <p>Calling {@code write()} more than once throws {@link IllegalStateException}.
  */
 class RemoteServiceResponse implements ServiceResponse {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteServiceResponse.class);
-    private static final int CHUNK_SIZE = 8192;
 
     private final int requestId;
     private final Channel channel;
-    private final Object writeMonitor;
     private boolean closed;
+    private boolean written;
+    private byte[] bufferedData;
 
     RemoteServiceResponse(int requestId, Channel channel) {
         this.requestId = requestId;
         this.channel = channel;
-        this.writeMonitor = ConnectionManager.getWriteMonitor(channel);
     }
 
     @Override
     public void write(byte[] data) {
         if (closed) throw new IllegalStateException("Response already closed");
-
-        int remaining = data.length;
-        int offset = 0;
-
-        boolean onEventLoop = channel.eventLoop().inEventLoop();
-
-        while (remaining > 0) {
-            int chunkLen = Math.min(remaining, CHUNK_SIZE);
-
-            if (!onEventLoop) {
-                // Safe to block — we won't starve the event loop
-                synchronized (writeMonitor) {
-                    while (!channel.isWritable()) {
-                        if (!channel.isActive()) {
-                            throw new IllegalStateException("Channel closed");
-                        }
-                        try {
-                            writeMonitor.wait();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new IllegalStateException("Interrupted while writing response", e);
-                        }
-                    }
-                }
-            } else {
-                // On event loop — blocking would deadlock.
-                // Just check if the channel is still alive.
-                if (!channel.isActive()) {
-                    throw new IllegalStateException("Channel closed");
-                }
-            }
-
-            byte[] framePayload = new byte[4 + chunkLen];
-            ByteBuffer.wrap(framePayload).putInt(requestId);
-            System.arraycopy(data, offset, framePayload, 4, chunkLen);
-
-            channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_DATA, framePayload));
-
-            offset += chunkLen;
-            remaining -= chunkLen;
-        }
+        if (written) throw new IllegalStateException(
+                "write() can only be called once for non-streaming services. " +
+                "Use RStreamingService for multi-write responses.");
+        written = true;
+        bufferedData = data;
     }
 
     @Override
@@ -89,13 +48,13 @@ class RemoteServiceResponse implements ServiceResponse {
         if (closed) return;
         closed = true;
 
-        // Send SERVICE_END with status=0 (success)
-        byte[] payload = new byte[5];
-        ByteBuffer buf = ByteBuffer.wrap(payload);
-        buf.putInt(requestId);
-        buf.put((byte) 0);
-        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_END, payload));
-        log.debug("Response closed for request {}", requestId);
+        byte[] data = bufferedData != null ? bufferedData : new byte[0];
+        byte[] payload = new byte[4 + data.length];
+        ByteBuffer.wrap(payload).putInt(requestId);
+        System.arraycopy(data, 0, payload, 4, data.length);
+
+        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_RESPONSE, payload));
+        log.debug("Response sent for request {} ({} bytes)", requestId, data.length);
     }
 
     @Override
@@ -109,17 +68,5 @@ class RemoteServiceResponse implements ServiceResponse {
 
         channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_ERROR, payload));
         log.debug("Response failed for request {} ({} bytes error detail)", requestId, error.length);
-    }
-
-    void closeWithError() {
-        if (closed) return;
-        closed = true;
-
-        byte[] payload = new byte[5];
-        ByteBuffer buf = ByteBuffer.wrap(payload);
-        buf.putInt(requestId);
-        buf.put((byte) 1);
-        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_END, payload));
-        log.debug("Response closed with error for request {}", requestId);
     }
 }

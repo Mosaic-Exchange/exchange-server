@@ -2,7 +2,7 @@ package org.rumor.app;
 
 import org.rumor.gossip.NodeId;
 import org.rumor.service.OnStateChange;
-import org.rumor.service.RService;
+import org.rumor.service.RStreamingService;
 import org.rumor.service.ServiceResponse;
 import org.rumor.service.StatePublisher;
 
@@ -27,7 +27,7 @@ import java.util.StringJoiner;
  * <p><b>Request format</b> (UTF-8): filename within the shared root.
  * <p><b>Response</b>: raw file bytes, streamed in chunks.
  */
-public class FileDownloadService extends RService implements StatePublisher {
+public class FileDownloadService extends RStreamingService implements StatePublisher {
 
     public static final String STATE_KEY = "SHARED_FILES";
     private static final int READ_BUFFER_SIZE = 64 * 1024;
@@ -103,14 +103,12 @@ public class FileDownloadService extends RService implements StatePublisher {
         Path filePath = sharedRoot.resolve(fileName).normalize();
 
         if (!filePath.startsWith(sharedRoot)) {
-            response.write("ERROR: path outside shared root".getBytes(StandardCharsets.UTF_8));
-            response.close();
+            response.fail("path outside shared root".getBytes(StandardCharsets.UTF_8));
             return;
         }
 
         if (!Files.isRegularFile(filePath)) {
-            response.write("ERROR: file not found".getBytes(StandardCharsets.UTF_8));
-            response.close();
+            response.fail("file not found".getBytes(StandardCharsets.UTF_8));
             return;
         }
 
@@ -128,10 +126,7 @@ public class FileDownloadService extends RService implements StatePublisher {
             }
             response.close();
         } catch (IOException e) {
-            //TODO: this is not gonna cut it reiceiving end must no that something broke. and that
-            // we are no longer able to serve
-            response.write(("ERROR: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-            response.close();
+            response.fail(e.getMessage().getBytes(StandardCharsets.UTF_8));
         }
     }
 }
