@@ -25,4 +25,11 @@ class LocalServiceResponse implements ServiceResponse {
         closed = true;
         onStateChange.accept(new RequestEvent.Succeeded());
     }
+
+    @Override
+    public void fail(byte[] error) {
+        if (closed) return;
+        closed = true;
+        onStateChange.accept(new RequestEvent.Failed(new String(error, java.nio.charset.StandardCharsets.UTF_8)));
+    }
 }

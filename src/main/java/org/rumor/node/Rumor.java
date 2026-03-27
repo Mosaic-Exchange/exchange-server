@@ -123,6 +123,7 @@ public class Rumor {
             case SERVICE_REQUEST -> serviceManager.handleServiceRequest(ctx, frame.payload());
             case SERVICE_DATA    -> serviceManager.handleServiceData(ctx, frame.payload());
             case SERVICE_END     -> serviceManager.handleServiceEnd(ctx, frame.payload());
+            case SERVICE_ERROR   -> serviceManager.handleServiceError(ctx, frame.payload());
         }
     }
 

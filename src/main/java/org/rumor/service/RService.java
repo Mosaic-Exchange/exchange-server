@@ -92,7 +92,7 @@ public abstract class RService {
             serve(request, response);
             response.close();
         } catch (Exception e) {
-            onStateChange.accept(new RequestEvent.Failed(e.getMessage()));
+            response.fail(e.getMessage().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
 

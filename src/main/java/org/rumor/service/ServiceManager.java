@@ -216,7 +216,8 @@ public class ServiceManager implements ClusterView {
                 response.close();
             } catch (Exception e) {
                 log.error("Error serving request {} (service='{}')", requestId, serviceName, e);
-                response.closeWithError();
+                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                response.fail(msg.getBytes(StandardCharsets.UTF_8));
             }
         } else {
             log.warn("No service registered for '{}', ignoring request {}", serviceName, requestId);
@@ -243,6 +244,23 @@ public class ServiceManager implements ClusterView {
             pending.onStateChange.accept(new RequestEvent.StreamData(data));
         } else {
             log.warn("Received data for unknown request {}", requestId);
+        }
+    }
+
+    public void handleServiceError(ChannelHandlerContext ctx, byte[] payload) {
+        ByteBuffer buf = ByteBuffer.wrap(payload);
+        int requestId = buf.getInt();
+        byte[] errorBytes = new byte[buf.remaining()];
+        buf.get(errorBytes);
+        String reason = new String(errorBytes, StandardCharsets.UTF_8);
+
+        PendingRequest pending = pendingRequests.remove(requestId);
+        if (pending != null) {
+            pending.cancelTimeouts();
+            pending.onStateChange.accept(new RequestEvent.Failed(reason));
+            log.warn("Request {} failed remotely: {}", requestId, reason);
+        } else {
+            log.warn("Received error for unknown request {}", requestId);
         }
     }
 

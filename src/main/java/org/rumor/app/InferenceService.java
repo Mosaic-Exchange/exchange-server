@@ -64,8 +64,7 @@ public class InferenceService extends RService {
 
             response.close();
         } catch (Exception e) {
-            response.write(("Error: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
-            response.close();
+            response.fail(e.getMessage().getBytes(StandardCharsets.UTF_8));
         }
     }
 

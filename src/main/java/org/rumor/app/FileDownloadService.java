@@ -128,6 +128,8 @@ public class FileDownloadService extends RService implements StatePublisher {
             }
             response.close();
         } catch (IOException e) {
+            //TODO: this is not gonna cut it reiceiving end must no that something broke. and that
+            // we are no longer able to serve
             response.write(("ERROR: " + e.getMessage()).getBytes(StandardCharsets.UTF_8));
             response.close();
         }

@@ -98,6 +98,19 @@ class RemoteServiceResponse implements ServiceResponse {
         log.debug("Response closed for request {}", requestId);
     }
 
+    @Override
+    public void fail(byte[] error) {
+        if (closed) return;
+        closed = true;
+
+        byte[] payload = new byte[4 + error.length];
+        ByteBuffer.wrap(payload).putInt(requestId);
+        System.arraycopy(error, 0, payload, 4, error.length);
+
+        channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_ERROR, payload));
+        log.debug("Response failed for request {} ({} bytes error detail)", requestId, error.length);
+    }
+
     void closeWithError() {
         if (closed) return;
         closed = true;

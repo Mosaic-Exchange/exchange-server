@@ -10,3 +10,5 @@ we need a way for applciation to decide
 some state that can be synced from the network
 
 we can sync in states like types of adapter available , types of llm models runnong
+
+
