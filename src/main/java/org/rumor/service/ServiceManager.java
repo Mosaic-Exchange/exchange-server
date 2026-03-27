@@ -12,6 +12,7 @@ import org.rumor.transport.RumorFrame;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -23,8 +24,8 @@ import java.util.function.Predicate;
 
 /**
  * Manages service registration, request routing, node picking, streaming
- * handshake, and periodic state publishing for services that implement
- * {@link StatePublisher}.
+ * handshake, and periodic state publishing for services annotated with
+ * {@link MaintainState} and {@link StateKey}.
  *
  * <p>Handles two service modes:
  * <ul>
@@ -99,8 +100,8 @@ public class ServiceManager implements ClusterView {
         service.setManager(this);
         log.info("Registered {} service: {}", service.isStreamable() ? "streaming" : "request/response", name);
 
-        if (service instanceof StatePublisher publisher) {
-            scheduleStatePublisher(publisher);
+        if (service.getClass().isAnnotationPresent(MaintainState.class)) {
+            scheduleStateKeyMethods(service);
         }
         fireRegistrationChanged();
     }
@@ -468,16 +469,23 @@ public class ServiceManager implements ClusterView {
     //  State publishing
     // ====================================================================
 
-    private void scheduleStatePublisher(StatePublisher publisher) {
-        ScheduledFuture<?> future = timeoutScheduler.scheduleAtFixedRate(() -> {
-            try {
-                String value = publisher.computeState();
-                gossipService.setLocalState(publisher.stateKey(), value);
-            } catch (Exception e) {
-                log.error("Error computing state for key '{}'", publisher.stateKey(), e);
-            }
-        }, 0, STATE_PUBLISH_INTERVAL_MS, TimeUnit.MILLISECONDS);
-        publisherFutures.add(future);
+    private void scheduleStateKeyMethods(RService service) {
+        String prefix = service.serviceName() + ".";
+        for (Method method : service.getClass().getMethods()) {
+            StateKey ann = method.getAnnotation(StateKey.class);
+            if (ann == null) continue;
+
+            String qualifiedKey = prefix + ann.value();
+            ScheduledFuture<?> future = timeoutScheduler.scheduleAtFixedRate(() -> {
+                try {
+                    String value = (String) method.invoke(service);
+                    gossipService.setLocalState(qualifiedKey, value);
+                } catch (Exception e) {
+                    log.error("Error computing state for key '{}'", qualifiedKey, e);
+                }
+            }, 0, STATE_PUBLISH_INTERVAL_MS, TimeUnit.MILLISECONDS);
+            publisherFutures.add(future);
+        }
     }
 
     // ====================================================================

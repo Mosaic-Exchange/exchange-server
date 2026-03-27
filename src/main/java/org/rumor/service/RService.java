@@ -27,8 +27,9 @@ import java.util.function.Predicate;
  *
  * <p>The service is identified by the simple class name of the subclass.
  *
- * <p>Optionally implement {@link StatePublisher} to automatically publish
- * application state into the gossip protocol.
+ * <p>Optionally annotate the subclass with {@link MaintainState} and mark
+ * methods with {@link StateKey} to automatically publish application state
+ * into the gossip protocol.
  */
 public abstract class RService {
 
@@ -125,6 +126,21 @@ public abstract class RService {
      */
     public final boolean isStreamable() {
         return this.getClass().isAnnotationPresent(Streamable.class);
+    }
+
+    /**
+     * Returns the gossip-qualified form of a state key:
+     * {@code ServiceClassName.rawKey}.
+     *
+     * <p>Use this when querying {@link ClusterView#stateForKey(String)} or
+     * when building a peer filter, so the key matches what the framework
+     * actually publishes.
+     *
+     * @param rawKey the unqualified key (same value passed to {@link StateKey})
+     * @return the qualified key, e.g. {@code "FileDownloadService.SHARED_FILES"}
+     */
+    protected final String qualifiedKey(String rawKey) {
+        return serviceName() + "." + rawKey;
     }
 
     void setManager(ServiceManager manager) {

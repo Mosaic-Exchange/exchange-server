@@ -1,10 +1,11 @@
 package org.rumor.app;
 
 import org.rumor.gossip.NodeId;
+import org.rumor.service.MaintainState;
 import org.rumor.service.OnStateChange;
 import org.rumor.service.RService;
 import org.rumor.service.ServiceResponse;
-import org.rumor.service.StatePublisher;
+import org.rumor.service.StateKey;
 import org.rumor.service.Streamable;
 
 import java.io.IOException;
@@ -29,7 +30,8 @@ import java.util.StringJoiner;
  * <p><b>Response</b>: raw file bytes, streamed in chunks.
  */
 @Streamable
-public class FileDownloadService extends RService implements StatePublisher {
+@MaintainState
+public class FileDownloadService extends RService {
 
     public static final String STATE_KEY = "SHARED_FILES";
     private static final int READ_BUFFER_SIZE = 64 * 1024;
@@ -40,14 +42,9 @@ public class FileDownloadService extends RService implements StatePublisher {
         this.sharedRoot = sharedRoot.toAbsolutePath().normalize();
     }
 
-    // --- StatePublisher ---
+    // --- State publishing ---
 
-    @Override
-    public String stateKey() {
-        return STATE_KEY;
-    }
-
-    @Override
+    @StateKey("SHARED_FILES")
     public String computeState() {
         if (!Files.isDirectory(sharedRoot)) return "";
 
@@ -74,7 +71,7 @@ public class FileDownloadService extends RService implements StatePublisher {
      * @return map of node ID → file listing string (comma-separated name:size)
      */
     public Map<NodeId, String> discoverFiles() {
-        return clusterView().stateForKey(STATE_KEY);
+        return clusterView().stateForKey(qualifiedKey(STATE_KEY));
     }
 
     /**
@@ -87,7 +84,7 @@ public class FileDownloadService extends RService implements StatePublisher {
     public void downloadFrom(String fileName, OnStateChange onStateChange) {
         byte[] request = fileName.getBytes(StandardCharsets.UTF_8);
         dispatch(request, onStateChange, appState -> {
-            String files = appState.get(STATE_KEY);
+            String files = appState.get(qualifiedKey(STATE_KEY));
             if (files == null || files.isEmpty()) return false;
             for (String entry : files.split(",")) {
                 String name = entry.contains(":") ? entry.substring(0, entry.lastIndexOf(':')) : entry;

@@ -6,10 +6,6 @@ before transport.
 gossip protocol is defeinetly buggy. if seed stops and comes back alive
 it is creating problem. 
 
-we need a way for applciation to decide 
-some state that can be synced from the network
-
-we can sync in states like types of adapter available , types of llm models runnong
 
 ServiceResponse<YourCustomClass> response
 
@@ -52,13 +48,7 @@ rumor> 12:55:03 [request-timeout] WARN ServiceManager - Request 2 timed out: Idl
 I feel like this should have been rejected 
 by the server itself. 
 
-instead of having a Separate state publisher I should 
-look into ways of using annotation. (future)
 
-
-annotation based processing of states instead of Statepublisher
-ability to have as many state-keys as you would like
-also each key will be appended with the class name to maint uniqueness
 
 
 
@@ -72,4 +62,4 @@ IF the system can handle at least two requests  concurrently. then the local use
 
 
 We can bring a concept of service permit:- with permits you get a fixed memory, compute, maybe thread(?). Their are limited permits avialable For local and remote we can have separate permits. And allow the service layer to define. 
-With permits we can define something called scope : LOCAL, REMOTE and assign pool of threads for their execution. But why are we bothered about threading 
+With permits we can define something called scope : LOCAL, REMOTE and assign pool of threads for their execution. But why are we bothered about threading. This whole priority can be doen at the applciation layer
