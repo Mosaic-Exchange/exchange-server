@@ -20,6 +20,7 @@ we also need a message a message from the receing end sayign that
 they no longer need that service;_prompt> hello there
 Sending to remote peer...
 
+(good issue to add on github) need to replicate ollama
 Inference failed: Idle timeout (no stream data received within 60000ms)
 rumor> 12:55:03 [request-timeout] WARN ServiceManager - Request 2 timed out: Idle timeout (no stream data received within 60000ms)
 12:55:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
@@ -48,11 +49,27 @@ rumor> 12:55:03 [request-timeout] WARN ServiceManager - Request 2 timed out: Idl
 12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
 12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
 12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream end for unknown request 2
+I feel like this should have been rejected 
+by the server itself. 
 
 instead of having a Separate state publisher I should 
-look into ways of using annotation. 
+look into ways of using annotation. (future)
 
 
 annotation based processing of states instead of Statepublisher
 ability to have as many state-keys as you would like
 also each key will be appended with the class name to maint uniqueness
+
+
+
+
+Currently their is no priority given to local requests made via RService.request . 
+For prioruty implementation we can do the following:-
+we can have a concurrent queu where if any remote requests comes in will
+first drop its key at the tail and wait for its turn. When its is done it shall 
+remove itself from the queue. Whe a local request comes in we always add to the top.
+IF the system can handle at least two requests  concurrently. then the local user will never feel like this service is also being used by remote 
+
+
+We can bring a concept of service permit:- with permits you get a fixed memory, compute, maybe thread(?). Their are limited permits avialable For local and remote we can have separate permits. And allow the service layer to define. 
+With permits we can define something called scope : LOCAL, REMOTE and assign pool of threads for their execution. But why are we bothered about threading 

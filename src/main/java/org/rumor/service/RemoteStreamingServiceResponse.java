@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.ByteBuffer;
 
 /**
- * Multi-write response for {@link RStreamingService} requests.
+ * Multi-write response for {@link Streamable} service requests.
  *
  * <p>{@link #write(byte[])} may be called multiple times, each sending a
  * {@code SERVICE_STREAM_DATA} frame. {@link #close()} sends

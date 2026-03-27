@@ -38,7 +38,7 @@ class RemoteServiceResponse implements ServiceResponse {
         if (closed) throw new IllegalStateException("Response already closed");
         if (written) throw new IllegalStateException(
                 "write() can only be called once for non-streaming services. " +
-                "Use RStreamingService for multi-write responses.");
+                "Use @Streamable for multi-write responses.");
         written = true;
         bufferedData = data;
     }

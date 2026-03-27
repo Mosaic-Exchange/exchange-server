@@ -2,9 +2,10 @@ package org.rumor.app;
 
 import org.rumor.gossip.NodeId;
 import org.rumor.service.OnStateChange;
-import org.rumor.service.RStreamingService;
+import org.rumor.service.RService;
 import org.rumor.service.ServiceResponse;
 import org.rumor.service.StatePublisher;
+import org.rumor.service.Streamable;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -27,7 +28,8 @@ import java.util.StringJoiner;
  * <p><b>Request format</b> (UTF-8): filename within the shared root.
  * <p><b>Response</b>: raw file bytes, streamed in chunks.
  */
-public class FileDownloadService extends RStreamingService implements StatePublisher {
+@Streamable
+public class FileDownloadService extends RService implements StatePublisher {
 
     public static final String STATE_KEY = "SHARED_FILES";
     private static final int READ_BUFFER_SIZE = 64 * 1024;

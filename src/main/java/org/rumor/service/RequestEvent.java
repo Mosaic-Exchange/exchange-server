@@ -10,7 +10,7 @@ package org.rumor.service;
  *   <li>{@link Failed} – failed (includes a reason)</li>
  * </ul>
  *
- * <p><b>RStreamingService (streaming):</b>
+ * <p><b>Streaming ({@link Streamable}):</b>
  * <ul>
  *   <li>{@link Processing} – the request has been sent</li>
  *   <li>{@link StreamData} – a chunk of response data has arrived</li>

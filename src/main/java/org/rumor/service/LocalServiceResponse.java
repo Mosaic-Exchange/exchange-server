@@ -4,11 +4,11 @@ package org.rumor.service;
  * In-memory implementation of {@link ServiceResponse} for local service invocation.
  * Routes write/close calls to {@link OnStateChange} as {@link RequestEvent} emissions.
  *
- * <p>When {@code singleWrite} is {@code true} (used by {@link RService#request}),
+ * <p>When {@code singleWrite} is {@code true} (non-{@link Streamable} services),
  * calling {@link #write(byte[])} more than once throws {@link IllegalStateException},
  * and the data is delivered with the {@link RequestEvent.Succeeded} event on close.
  *
- * <p>When {@code singleWrite} is {@code false} (used by {@link RStreamingService#request}),
+ * <p>When {@code singleWrite} is {@code false} ({@link Streamable} services),
  * each {@link #write(byte[])} emits a {@link RequestEvent.StreamData} event.
  */
 class LocalServiceResponse implements ServiceResponse {
@@ -30,7 +30,7 @@ class LocalServiceResponse implements ServiceResponse {
         if (singleWrite && written) {
             throw new IllegalStateException(
                     "write() can only be called once for non-streaming services. " +
-                    "Use RStreamingService for multi-write responses.");
+                    "Use @Streamable for multi-write responses.");
         }
         written = true;
         if (singleWrite) {

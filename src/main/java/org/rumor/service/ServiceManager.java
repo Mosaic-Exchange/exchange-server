@@ -26,10 +26,10 @@ import java.util.function.Predicate;
  * handshake, and periodic state publishing for services that implement
  * {@link StatePublisher}.
  *
- * <p>Handles two service types:
+ * <p>Handles two service modes:
  * <ul>
- *   <li>{@link RService} — request/response on the I/O thread, single-write</li>
- *   <li>{@link RStreamingService} — streaming on a dedicated thread, multi-write,
+ *   <li>Default — request/response on the I/O thread, single-write</li>
+ *   <li>{@link Streamable} — streaming on a dedicated thread, multi-write,
  *       at most one active stream per node</li>
  * </ul>
  *
@@ -47,7 +47,6 @@ public class ServiceManager implements ClusterView {
     private final NodeId localId;
 
     private final Map<String, RService> services = new ConcurrentHashMap<>();
-    private final Map<String, RStreamingService> streamingServices = new ConcurrentHashMap<>();
 
     private final AtomicInteger requestIdGenerator = new AtomicInteger(1);
     private final ScheduledExecutorService timeoutScheduler;
@@ -98,19 +97,7 @@ public class ServiceManager implements ClusterView {
         String name = service.serviceName();
         services.put(name, service);
         service.setManager(this);
-        log.info("Registered service: {}", name);
-
-        if (service instanceof StatePublisher publisher) {
-            scheduleStatePublisher(publisher);
-        }
-        fireRegistrationChanged();
-    }
-
-    public void register(RStreamingService service) {
-        String name = service.serviceName();
-        streamingServices.put(name, service);
-        service.setManager(this);
-        log.info("Registered streaming service: {}", name);
+        log.info("Registered {} service: {}", service.isStreamable() ? "streaming" : "request/response", name);
 
         if (service instanceof StatePublisher publisher) {
             scheduleStatePublisher(publisher);
@@ -119,9 +106,7 @@ public class ServiceManager implements ClusterView {
     }
 
     public Set<String> getRegisteredNames() {
-        Set<String> names = new HashSet<>(services.keySet());
-        names.addAll(streamingServices.keySet());
-        return Collections.unmodifiableSet(names);
+        return Collections.unmodifiableSet(new HashSet<>(services.keySet()));
     }
 
     private void fireRegistrationChanged() {
@@ -173,7 +158,7 @@ public class ServiceManager implements ClusterView {
 
     /**
      * Send a request to a remote peer offering the named service.
-     * Works for both {@link RService} and {@link RStreamingService} —
+     * Works for both default and {@link Streamable} services —
      * the server decides the protocol after receiving SERVICE_REQUEST.
      */
     public void sendRequest(String serviceName, byte[] request, OnStateChange onStateChange,
@@ -367,9 +352,15 @@ public class ServiceManager implements ClusterView {
         log.info("Received SERVICE_REQUEST id={} service='{}' from={} ({} bytes)",
                 requestId, serviceName, ctx.channel().remoteAddress(), requestData.length);
 
-        // Check non-streaming services first
         RService service = services.get(serviceName);
-        if (service != null) {
+        if (service == null) {
+            log.warn("No service registered for '{}', ignoring request {}", serviceName, requestId);
+            sendError(ctx, requestId, "No service registered for '" + serviceName + "'");
+            return;
+        }
+
+        if (!service.isStreamable()) {
+            // Request/response: serve on the I/O thread, single-write
             RemoteServiceResponse response = new RemoteServiceResponse(requestId, ctx.channel());
             try {
                 service.serve(requestData, response);
@@ -382,40 +373,29 @@ public class ServiceManager implements ClusterView {
             return;
         }
 
-        // Check streaming services
-        RStreamingService streamingService = streamingServices.get(serviceName);
-        if (streamingService != null) {
-            if (!streamingActive.compareAndSet(false, true)) {
-                log.warn("Rejecting streaming request {} — a stream is already active", requestId);
-                sendError(ctx, requestId, "A streaming session is already active on this node");
-                return;
-            }
-
-            // Store pending stream and wait for STREAM_START from client
-            PendingStream pending = new PendingStream(requestId, ctx, streamingService, requestData);
-            pendingStreams.put(requestId, pending);
-
-            // Timeout if client never sends STREAM_START
-            pending.handshakeTimeout = timeoutScheduler.schedule(() -> {
-                PendingStream removed = pendingStreams.remove(requestId);
-                if (removed != null) {
-                    streamingActive.set(false);
-                    log.warn("Stream handshake timed out for request {}", requestId);
-                    sendError(ctx, requestId, "Stream handshake timed out");
-                }
-            }, STREAM_HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-
-            // Send INIT_STREAM to client
-            byte[] initPayload = new byte[4];
-            ByteBuffer.wrap(initPayload).putInt(requestId);
-            ctx.writeAndFlush(new RumorFrame(MessageType.SERVICE_INIT_STREAM, initPayload));
-            log.debug("Sent INIT_STREAM for request {} (service='{}')", requestId, serviceName);
+        // Streaming: handshake then serve on dedicated thread
+        if (!streamingActive.compareAndSet(false, true)) {
+            log.warn("Rejecting streaming request {} — a stream is already active", requestId);
+            sendError(ctx, requestId, "A streaming session is already active on this node");
             return;
         }
 
-        // Unknown service
-        log.warn("No service registered for '{}', ignoring request {}", serviceName, requestId);
-        sendError(ctx, requestId, "No service registered for '" + serviceName + "'");
+        PendingStream pending = new PendingStream(requestId, ctx, service, requestData);
+        pendingStreams.put(requestId, pending);
+
+        pending.handshakeTimeout = timeoutScheduler.schedule(() -> {
+            PendingStream removed = pendingStreams.remove(requestId);
+            if (removed != null) {
+                streamingActive.set(false);
+                log.warn("Stream handshake timed out for request {}", requestId);
+                sendError(ctx, requestId, "Stream handshake timed out");
+            }
+        }, STREAM_HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+        byte[] initPayload = new byte[4];
+        ByteBuffer.wrap(initPayload).putInt(requestId);
+        ctx.writeAndFlush(new RumorFrame(MessageType.SERVICE_INIT_STREAM, initPayload));
+        log.debug("Sent INIT_STREAM for request {} (service='{}')", requestId, serviceName);
     }
 
     /**
@@ -573,12 +553,12 @@ public class ServiceManager implements ClusterView {
     private static class PendingStream {
         final int requestId;
         final ChannelHandlerContext ctx;
-        final RStreamingService service;
+        final RService service;
         final byte[] requestData;
         volatile ScheduledFuture<?> handshakeTimeout;
 
         PendingStream(int requestId, ChannelHandlerContext ctx,
-                      RStreamingService service, byte[] requestData) {
+                      RService service, byte[] requestData) {
             this.requestId = requestId;
             this.ctx = ctx;
             this.service = service;

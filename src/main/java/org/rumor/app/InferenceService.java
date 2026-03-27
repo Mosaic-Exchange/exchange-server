@@ -1,7 +1,8 @@
 package org.rumor.app;
 
-import org.rumor.service.RStreamingService;
+import org.rumor.service.RService;
 import org.rumor.service.ServiceResponse;
+import org.rumor.service.Streamable;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -19,7 +20,8 @@ import java.util.stream.Stream;
  * <p>Requires an Ollama server running (e.g. {@code ollama serve}).
  * Endpoint and model are configured at construction time.
  */
-public class InferenceService extends RStreamingService {
+@Streamable
+public class InferenceService extends RService {
 
     private final String endpoint;
     private final String model;
