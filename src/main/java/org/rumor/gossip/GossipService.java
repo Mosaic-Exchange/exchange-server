@@ -291,11 +291,17 @@ public class GossipService {
             if (remoteDigest == null) {
                 // Remote doesn't know about this node at all — push it
                 toPush.add(entry);
+            } else if (entry.getValue().generation() > remoteDigest.generation()) {
+                // We have a newer generation — push it
+                toPush.add(entry);
+            } else if (entry.getValue().generation() < remoteDigest.generation()) {
+                // Remote has a newer generation — request it
+                toRequest.add(entry.getKey());
             } else if (entry.getValue().maxVersion() > remoteDigest.maxVersion()) {
-                // We have newer data — push it
+                // Same generation, but we have newer data — push it
                 toPush.add(entry);
             } else if (entry.getValue().maxVersion() < remoteDigest.maxVersion()) {
-                // Remote has newer data — request it
+                // Same generation, but remote has newer data — request it
                 toRequest.add(entry.getKey());
             }
         }
