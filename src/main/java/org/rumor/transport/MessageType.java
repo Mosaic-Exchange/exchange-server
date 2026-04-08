@@ -18,7 +18,10 @@ public enum MessageType {
     SERVICE_STREAM_START  (0x21),
     SERVICE_STREAM_DATA   (0x22),
     SERVICE_STREAM_END    (0x23),
-    SERVICE_STREAM_ERROR  (0x24);
+    SERVICE_STREAM_ERROR  (0x24),
+
+    // --- Cancellation (client → server) ---
+    SERVICE_CANCEL        (0x30);
 
     private final int code;
 

@@ -1,16 +1,17 @@
 package org.rumor;
 
 import org.rumor.app.FileDownloadService;
-import org.rumor.app.InferenceService;
+import org.rumor.app.InferencePriorityService;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.NodeId;
 import org.rumor.gossip.VersionedValue;
 import org.rumor.node.NodeType;
 import org.rumor.node.Rumor;
 import org.rumor.node.RumorConfig;
-import org.rumor.service.RService;
 import org.rumor.service.OnStateChange;
 import org.rumor.service.RequestEvent;
+import org.rumor.service.RService;
+import org.rumor.service.ServiceHandle;
 import org.rumor.service.ServiceResponse;
 
 import java.io.FileOutputStream;
@@ -21,6 +22,8 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.CountDownLatch;
+
+import sun.misc.Signal;
 
 /**
  * 
@@ -59,18 +62,41 @@ public class Main {
     }
 
     private static Path sharedDir = Path.of(System.getProperty("user.home"), "mosaic-shared");
+    private static volatile ServiceHandle activeHandle;
 
     public static void main(String[] args) throws Exception {
         RumorConfig config = parseArgs(args);
         Rumor rumor = new Rumor(config);
 
+        Signal.handle(new Signal("INT"), signal -> {
+            ServiceHandle h = activeHandle;
+            if (h != null) {
+                System.out.println("\nCancelling...");
+                h.cancel();
+            } else {
+                rumor.stop();
+                System.out.println("\nGoodbye.");
+                System.exit(0);
+            }
+        });
+
         Path shared = sharedDir.toAbsolutePath().normalize();
 
         HelloService helloService = new HelloService();
-        InferenceService inferenceService = new InferenceService();
+        InferencePriorityService inferenceService = new InferencePriorityService();
         FileDownloadService fileDownloadService = new FileDownloadService(shared);
 
         rumor.register(helloService);
+
+        NodeType type = null;
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--type") ) {
+                type = NodeType.fromString(args[++i]);
+            }
+        }
+        // if (type != null && type.equals(NodeType.MASTER)){
+        //     rumor.register(inferenceService);
+        // }
         rumor.register(inferenceService);
         rumor.register(fileDownloadService);
 
@@ -80,6 +106,7 @@ public class Main {
         System.out.println("Node " + rumor.localId() + " (" + config.nodeType() + ") is running.");
         System.out.println("Shared directory: " + shared);
         System.out.println("Commands: ls, hello, a (ask-local), ask-remote, files, download, quit");
+        System.out.println("Press Ctrl+C to cancel a running service.");
         System.out.println();
 
         Scanner scanner = new Scanner(System.in);
@@ -110,9 +137,7 @@ public class Main {
     private static void sendHello(Rumor rumor, HelloService helloService) {
         byte[] request = ("Hello from " + rumor.localId() + "!").getBytes(StandardCharsets.UTF_8);
         CountDownLatch done = new CountDownLatch(1);
-        //This can be ran on a separate thread from ui so that
-        //ui does not freez as this can take longer
-        helloService.dispatch(
+        ServiceHandle handle = helloService.dispatch(
                 request,
                 (event) -> {
                     switch (event) {
@@ -133,10 +158,13 @@ public class Main {
                 }
         );
 
+        activeHandle = handle;
         try {
             done.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } finally {
+            activeHandle = null;
         }
     }
 
@@ -183,7 +211,7 @@ public class Main {
 
     // --- Inference command ---
 
-    private static void sendInference(Scanner scanner, InferenceService inferenceService, boolean local) {
+    private static void sendInference(Scanner scanner, InferencePriorityService inferenceService, boolean local) {
         System.out.print("prompt> ");
         if (!scanner.hasNextLine()) return;
         String prompt = scanner.nextLine().trim();
@@ -212,16 +240,20 @@ public class Main {
             }
         };
 
+        ServiceHandle handle;
         if (local) {
-            inferenceService.request(request, callback);
+            handle = inferenceService.request(request, callback);
         } else {
-            inferenceService.dispatch(request, callback);
+            handle = inferenceService.dispatch(request, callback);
         }
 
+        activeHandle = handle;
         try {
             done.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } finally {
+            activeHandle = null;
         }
     }
 
@@ -295,7 +327,7 @@ public class Main {
             Files.createDirectories(outputPath.getParent());
             FileOutputStream fos = new FileOutputStream(outputPath.toFile());
 
-            fileDownloadService.downloadFrom(
+            ServiceHandle handle = fileDownloadService.downloadFrom(
                     remotePath,
                     (event) -> {
                         switch (event) {
@@ -322,11 +354,14 @@ public class Main {
                     }
             );
 
+            activeHandle = handle;
             done.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (IOException e) {
             System.out.println("Could not open output file: " + e.getMessage());
+        } finally {
+            activeHandle = null;
         }
     }
 
@@ -351,7 +386,7 @@ public class Main {
                     if (dir.startsWith("~")) dir = System.getProperty("user.home") + dir.substring(1);
                     sharedDir = Path.of(dir);
                 }
-
+                case "--debug-port" -> config.debugPort(Integer.parseInt(args[++i]));
 
                 case "--help" -> {
                     printUsage();
@@ -380,7 +415,7 @@ public class Main {
                   --request-timeout <ms>                     Overall request timeout in ms (default: 30000)
                   --idle-timeout <ms>                        Idle timeout between data messages in ms (default: 10000)
                   --shared-dir <path>                        Shared file directory (default: ~/mosaic-shared)
-
+                  --debug-port <port>                        Debug HTTP server port (disabled if not set)
 
                   --help                                     Show this help
 
