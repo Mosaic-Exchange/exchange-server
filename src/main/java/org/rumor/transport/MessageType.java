@@ -15,6 +15,9 @@ public enum MessageType {
 
     // --- Streaming (handshake + streamed data) ---
     SERVICE_INIT_STREAM   (0x20),
+    //this should only be sent before actually
+    //beign ready to send. this might be the bug that
+    //caused the issue in TODO
     SERVICE_STREAM_START  (0x21),
     SERVICE_STREAM_DATA   (0x22),
     SERVICE_STREAM_END    (0x23),

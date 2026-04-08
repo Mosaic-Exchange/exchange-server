@@ -63,3 +63,38 @@ IF the system can handle at least two requests  concurrently. then the local use
 
 We can bring a concept of service permit:- with permits you get a fixed memory, compute, maybe thread(?). Their are limited permits avialable For local and remote we can have separate permits. And allow the service layer to define. 
 With permits we can define something called scope : LOCAL, REMOTE and assign pool of threads for their execution. But why are we bothered about threading. This whole priority can be doen at the applciation layer
+
+PrioritizeLocal: 
+We have to non concurrent queues - one for local requests(with fixed size - calle thread will be blocked if quue is full)
+second if remtoe requests that are made on this node also enqued into a queue
+
+See let's say application has a budget of 5 concurrent requests
+for this service which is blocking (if it is not then their is 
+no need for doing anything special - as their can be a global cap on number of active service requests from peers on this node). Then app will delegate RService.serve request to a an Exector with 5 threads. Now suppose their are 10 remote requests piled up and 3 local requests - you would like to prefer executing local request firs for this service. 
+
+MaxRemoteRequest(100) on each request
+MaxThreadToServe
+MaxThread
+PrioritizaLocalRequest
+
+MyService(RService){
+    Executor exec_remote = Executor(thread_count=3, max_wait_capacity = 5);
+
+    Executor exec_local = Executor(thread_count=2, max_wait_capacity=5); 
+
+    remote_serve(){
+        add serve to remote executor - if it is not full 
+        else fail immediately 
+        return
+    }
+
+    local_request(){
+        add reuqest to local exec if full fail immedidately
+        return
+    }
+}
+
+
+In docs mention that when we call resposne.fail(bytes)
+we can have a protocol on top of protocl that tells you
+why this error was caused
