@@ -35,4 +35,3 @@ similarly for types output
 the offering end is not really cancelling the service
 
 RService.onCancel cleanup call back. would be best to react within the serve method itself
-
