@@ -77,7 +77,7 @@ public class EndpointState {
         }
     }
 
-    // --- Serialization ---
+    // Serialization
 
     public void writeTo(DataOutputStream out) throws IOException {
         out.writeLong(generation);

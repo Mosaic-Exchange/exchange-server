@@ -5,6 +5,7 @@ import org.rumor.service.MaintainState;
 import org.rumor.service.OnStateChange;
 import org.rumor.service.RService;
 import org.rumor.service.ServiceHandle;
+import org.rumor.service.ServiceRequest;
 import org.rumor.service.ServiceResponse;
 import org.rumor.service.StateKey;
 import org.rumor.service.Streamable;
@@ -17,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.function.Predicate;
 
 /**
  * Streams a file from this peer to the requester, and publishes the
@@ -43,9 +45,9 @@ public class FileDownloadService extends RService {
         this.sharedRoot = sharedRoot.toAbsolutePath().normalize();
     }
 
-    // --- State publishing ---
+    // State publishing
 
-    @StateKey("AVAILABLE_FILES")
+    @StateKey("SHARED_FILES")
     public String computeState() {
         if (!Files.isDirectory(sharedRoot)) return "";
 
@@ -64,7 +66,7 @@ public class FileDownloadService extends RService {
         return joiner.toString();
     }
 
-    // --- Client-side helpers ---
+    // Client-side helpers
 
     /**
      * Returns remote peers' shared file listings from gossip state.
@@ -83,9 +85,10 @@ public class FileDownloadService extends RService {
      * @param onStateChange callback for request lifecycle events
      * @return a handle that can be used to cancel the download
      */
+    @SuppressWarnings("unchecked")
     public ServiceHandle downloadFrom(String fileName, OnStateChange onStateChange) {
         byte[] request = fileName.getBytes(StandardCharsets.UTF_8);
-        return dispatch(request, onStateChange, appState -> {
+        Predicate<Map<String, String>> filter = appState -> {
             String files = appState.get(qualifiedKey(STATE_KEY));
             if (files == null || files.isEmpty()) return false;
             for (String entry : files.split(",")) {
@@ -93,14 +96,15 @@ public class FileDownloadService extends RService {
                 if (name.equals(fileName)) return true;
             }
             return false;
-        });
+        };
+        return dispatch(request, onStateChange, filter);
     }
 
-    // --- Server-side: stream file bytes ---
+    // Server-side: stream file bytes
 
     @Override
-    public void serve(byte[] request, ServiceResponse response) {
-        String fileName = new String(request, StandardCharsets.UTF_8).trim();
+    public void serve(ServiceRequest request, ServiceResponse response) {
+        String fileName = new String(request.raw(), StandardCharsets.UTF_8).trim();
         Path filePath = sharedRoot.resolve(fileName).normalize();
 
         if (!filePath.startsWith(sharedRoot)) {

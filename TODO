@@ -12,104 +12,27 @@ ServiceResponse<YourCustomClass> response
 RService.request will return YourCustomClass with SUCCEEDED
 similarly for types output
 
-we also need a message a message from the receing end sayign that
-they no longer need that service;_prompt> hello there
-Sending to remote peer...
 
-(good issue to add on github) need to replicate ollama
-Inference failed: Idle timeout (no stream data received within 60000ms)
-rumor> 12:55:03 [request-timeout] WARN ServiceManager - Request 2 timed out: Idle timeout (no stream data received within 60000ms)
-12:55:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2
-12:55:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream end for unknown request 2
-I feel like this should have been rejected 
-by the server itself. 
+2, sending cancel
+21:31:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:16 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:17 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
+21:31:18 [nioEventLoopGroup-3-1] WARN ServiceManager - Received stream data for unknown request 2, sending cancel
 
+the offering end is not really cancelling the service
 
+RService.onCancel cleanup call back. would be best to react within the serve method itself
 
-
-
-
-Currently their is no priority given to local requests made via RService.request . 
-For prioruty implementation we can do the following:-
-we can have a concurrent queu where if any remote requests comes in will
-first drop its key at the tail and wait for its turn. When its is done it shall 
-remove itself from the queue. Whe a local request comes in we always add to the top.
-IF the system can handle at least two requests  concurrently. then the local user will never feel like this service is also being used by remote 
-
-
-We can bring a concept of service permit:- with permits you get a fixed memory, compute, maybe thread(?). Their are limited permits avialable For local and remote we can have separate permits. And allow the service layer to define. 
-With permits we can define something called scope : LOCAL, REMOTE and assign pool of threads for their execution. But why are we bothered about threading. This whole priority can be doen at the applciation layer
-
-PrioritizeLocal: 
-We have to non concurrent queues - one for local requests(with fixed size - calle thread will be blocked if quue is full)
-second if remtoe requests that are made on this node also enqued into a queue
-
-See let's say application has a budget of 5 concurrent requests
-for this service which is blocking (if it is not then their is 
-no need for doing anything special - as their can be a global cap on number of active service requests from peers on this node). Then app will delegate RService.serve request to a an Exector with 5 threads. Now suppose their are 10 remote requests piled up and 3 local requests - you would like to prefer executing local request firs for this service. 
-
-MaxRemoteRequest(100) on each request
-MaxThreadToServe
-MaxThread
-PrioritizaLocalRequest
-
-MyService(RService){
-    Executor exec_remote = Executor(thread_count=3, max_wait_capacity = 5);
-
-    Executor exec_local = Executor(thread_count=2, max_wait_capacity=5); 
-
-    remote_serve(){
-        add serve to remote executor - if it is not full 
-        else fail immediately 
-        return
-    }
-
-    local_request(){
-        add reuqest to local exec if full fail immedidately
-        return
-    }
-}
-
-
-In docs mention that when we call resposne.fail(bytes)
-we can have a protocol on top of protocl that tells you
-why this error was caused
-
-
-We need two things:-
-1. if we get messages associated with a service we previouslt canceled then we
-sent SERVICE_CANCEL as a reponse. This can happen in the following situation:- suppose 
-we made a request it got queued on the remote 
-peer mean while it got lagged adn took a lot of time while we tried sending it a SERVICE_CANCEL request that failed. The remote
-peer is not healthy and started streaming data packets SERVICE_INIT_STREAM in response to this we must send STREAM_CANCEL and not SERVICE_STREAM_START. This defense shoudl be the case for all other message handling. 
-
-Their is currently now way from the ui to cancel a request or dispatch. We want
-this as it may be desirable. Possible solution is to return a ServiceHandle via
-which yuo could cancel this service.
-
-I have to think about dynamic changes in confiugrations of
-serices

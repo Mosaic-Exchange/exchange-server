@@ -1,15 +1,31 @@
 package org.rumor.service;
 
 /**
- * Abstraction for writing response bytes back to the requester.
+ * Abstraction for writing response data back to the requester.
  * Implementations handle either network (remote) or in-memory (local) delivery.
+ *
+ * <p>For remote responses, data is encoded to bytes via the service's codec
+ * before transmission. For local responses, the typed object is passed
+ * directly to the caller — no serialization occurs.
+ *
+ * @param <T> the response data type ({@code byte[]} by default)
  */
-public interface ServiceResponse {
+public interface ServiceResponse<T> {
 
     /**
-     * Write response data. May be called multiple times for streaming.
+     * Write typed response data. May be called multiple times for streaming.
      */
-    void write(byte[] data);
+    void write(T data);
+
+    /**
+     * Write raw bytes directly. For byte[] services this is equivalent to
+     * {@link #write(Object) write(T)}. For typed services this bypasses
+     * the codec and sends the bytes as-is over the wire.
+     *
+     * <p>This is a convenience method so byte[] services using raw
+     * (unparameterized) {@code ServiceResponse} don't need casts.
+     */
+    void writeRaw(byte[] data);
 
     /**
      * Signal successful completion. No further writes are allowed after this.

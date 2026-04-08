@@ -172,7 +172,7 @@ public class GossipService {
         return live.getFirst();
     }
 
-    // --- Handle incoming gossip messages ---
+    // Handle incoming gossip messages
 
     public void handleGossipDigest(ChannelHandlerContext ctx, byte[] payload) {
         try {
@@ -251,7 +251,7 @@ public class GossipService {
         }
     }
 
-    // --- Payload builders ---
+    // Payload builders
 
     private byte[] buildDigestPayload() throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -347,7 +347,7 @@ public class GossipService {
         return baos.toByteArray();
     }
 
-    // --- State application ---
+    // State application
 
     private void applyRemoteState(NodeId nodeId, EndpointState remoteState) {
         EndpointState local = endpointStateMap.get(nodeId);

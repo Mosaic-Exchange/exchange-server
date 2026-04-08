@@ -7,45 +7,63 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.CancellationException;
 
 /**
- * Single-write response for {@link RService} requests.
+ * Single-write response for {@link RService} requests over the network.
  *
- * <p>{@link #write(byte[])} may be called at most once and buffers the data.
- * {@link #close()} sends a single {@code SERVICE_RESPONSE} frame with the
- * buffered payload (or an empty payload if {@code write} was never called).
- * {@link #fail(byte[])} sends a {@code SERVICE_ERROR} frame instead.
+ * <p>{@link #write(Object) write(T)} encodes the typed response via the service's codec,
+ * then buffers the bytes. {@link #write(byte[])} stores raw bytes directly without
+ * encoding. {@link #close()} sends a single {@code SERVICE_RESPONSE} frame with the
+ * buffered payload. {@link #fail(byte[])} sends a {@code SERVICE_ERROR} frame instead.
  *
  * <p>Calling {@code write()} more than once throws {@link IllegalStateException}.
+ *
+ * @param <T> the response data type
  */
-class RemoteServiceResponse implements ServiceResponse {
+class RemoteServiceResponse<T> implements ServiceResponse<T> {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteServiceResponse.class);
 
     private final int requestId;
     private final Channel channel;
+    private final ServiceHandle handle;
+    private final ServiceCodec<T> codec;
     private boolean closed;
     private boolean written;
     private byte[] bufferedData;
 
-    RemoteServiceResponse(int requestId, Channel channel) {
+    RemoteServiceResponse(int requestId, Channel channel, ServiceHandle handle, ServiceCodec<T> codec) {
         this.requestId = requestId;
         this.channel = channel;
+        this.handle = handle;
+        this.codec = codec;
     }
 
     @Override
-    public void write(byte[] data) {
+    public void write(T data) {
+        doWrite(codec.encode(data));
+    }
+
+    @Override
+    public void writeRaw(byte[] data) {
+        doWrite(data);
+    }
+
+    private void doWrite(byte[] encoded) {
         if (closed) throw new IllegalStateException("Response already closed");
+        if (handle.isCancelled()) throw new CancellationException("Service request cancelled");
         if (written) throw new IllegalStateException(
                 "write() can only be called once for non-streaming services. " +
                 "Use @Streamable for multi-write responses.");
         written = true;
-        bufferedData = data;
+        bufferedData = encoded;
     }
 
     @Override
     public void close() {
         if (closed) return;
+        if (handle.isCancelled()) { closed = true; return; }
         closed = true;
 
         byte[] data = bufferedData != null ? bufferedData : new byte[0];

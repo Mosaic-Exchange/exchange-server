@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * that allows the caller to cancel an in-progress service invocation.
  *
  * <p>For local requests ({@link RService#request}), cancellation is
- * cooperative: the next {@link ServiceResponse#write(byte[])} checks the
+ * cooperative: the next {@link ServiceResponse#write} checks the
  * cancelled flag and throws, unwinding the {@code serve()} call.
  *
  * <p>For remote dispatches ({@link RService#dispatch}), the framework

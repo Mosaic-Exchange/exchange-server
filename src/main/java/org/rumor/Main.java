@@ -1,10 +1,12 @@
 package org.rumor;
 
 import org.rumor.app.FileDownloadService;
-import org.rumor.app.InferencePriorityService;
+import org.rumor.app.InferenceRequest;
+import org.rumor.app.InferenceService;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.NodeId;
 import org.rumor.gossip.VersionedValue;
+import org.rumor.http.MosaicHttpServer;
 import org.rumor.node.NodeType;
 import org.rumor.node.Rumor;
 import org.rumor.node.RumorConfig;
@@ -12,7 +14,9 @@ import org.rumor.service.OnStateChange;
 import org.rumor.service.RequestEvent;
 import org.rumor.service.RService;
 import org.rumor.service.ServiceHandle;
+import org.rumor.service.ServiceRequest;
 import org.rumor.service.ServiceResponse;
+import org.rumor.service.RService.Config;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -46,11 +50,10 @@ import sun.misc.Signal;
 public class Main {
 
     static class HelloService extends RService {
-        
-        
+
         @Override
-        public void serve(byte[] request, ServiceResponse response) {
-            String message = new String(request, StandardCharsets.UTF_8);
+        public void serve(ServiceRequest request, ServiceResponse response) {
+            String message = new String(request.raw(), StandardCharsets.UTF_8);
             System.out.println();
             System.out.println(">> Incoming hello request: " + message);
 
@@ -63,6 +66,7 @@ public class Main {
 
     private static Path sharedDir = Path.of(System.getProperty("user.home"), "mosaic-shared");
     private static volatile ServiceHandle activeHandle;
+    private static MosaicHttpServer httpServer;
 
     public static void main(String[] args) throws Exception {
         RumorConfig config = parseArgs(args);
@@ -83,24 +87,34 @@ public class Main {
         Path shared = sharedDir.toAbsolutePath().normalize();
 
         HelloService helloService = new HelloService();
-        InferencePriorityService inferenceService = new InferencePriorityService();
+        InferenceService inferenceService = new InferenceService();
         FileDownloadService fileDownloadService = new FileDownloadService(shared);
 
         rumor.register(helloService);
-
-        NodeType type = null;
-        for (int i = 0; i < args.length; i++) {
-            if (args[i].equals("--type") ) {
-                type = NodeType.fromString(args[++i]);
-            }
-        }
-        // if (type != null && type.equals(NodeType.MASTER)){
-        //     rumor.register(inferenceService);
-        // }
-        rumor.register(inferenceService);
-        rumor.register(fileDownloadService);
+        rumor.register(inferenceService, new Config()
+                .remoteThreads(2)
+                .remoteQueueCapacity(2)
+                .localThreads(2)
+                .localQueueCapacity(2));
+        rumor.register(fileDownloadService, new Config()
+                .remoteThreads(2)
+                .remoteQueueCapacity(2));
 
         rumor.start();
+
+        // Start HTTP server if configured
+        if (config.httpPort() > 0) {
+            try {
+                httpServer = new MosaicHttpServer(
+                        config.httpPort(), rumor.serviceManager(), rumor.localId(),
+                        rumor::getClusterState, System.currentTimeMillis(),
+                        inferenceService, fileDownloadService, shared);
+                httpServer.start();
+                System.out.println("HTTP server running on port " + config.httpPort());
+            } catch (IOException e) {
+                System.err.println("Failed to start HTTP server: " + e.getMessage());
+            }
+        }
 
         System.out.println();
         System.out.println("Node " + rumor.localId() + " (" + config.nodeType() + ") is running.");
@@ -124,6 +138,7 @@ public class Main {
                 case "files" -> discoverFiles(fileDownloadService);
                 case "download" -> downloadFile(scanner, fileDownloadService, shared);
                 case "quit", "exit" -> {
+                    if (httpServer != null) httpServer.stop();
                     rumor.stop();
                     System.out.println("Goodbye.");
                     return;
@@ -137,26 +152,24 @@ public class Main {
     private static void sendHello(Rumor rumor, HelloService helloService) {
         byte[] request = ("Hello from " + rumor.localId() + "!").getBytes(StandardCharsets.UTF_8);
         CountDownLatch done = new CountDownLatch(1);
-        ServiceHandle handle = helloService.dispatch(
-                request,
-                (event) -> {
-                    switch (event) {
-                        case RequestEvent.Processing p ->
-                                System.out.println("Request sent, waiting for response...");
-                        case RequestEvent.Succeeded s -> {
-                            String reply = s.data() != null
-                                    ? new String(s.data(), StandardCharsets.UTF_8) : "";
-                            System.out.println("Response: " + reply);
-                            done.countDown();
-                        }
-                        case RequestEvent.Failed f -> {
-                            System.out.println("Request failed: " + f.reason());
-                            done.countDown();
-                        }
-                        default -> {}
-                    }
+        ServiceHandle handle = helloService.dispatch(request, event -> {
+            switch (event) {
+                case RequestEvent.Processing p ->
+                        System.out.println("Request sent, waiting for response...");
+                case RequestEvent.Succeeded s -> {
+                    byte[] data = s.raw();
+                    String reply = data != null
+                            ? new String(data, StandardCharsets.UTF_8) : "";
+                    System.out.println("Response: " + reply);
+                    done.countDown();
                 }
-        );
+                case RequestEvent.Failed f -> {
+                    System.out.println("Request failed: " + f.reason());
+                    done.countDown();
+                }
+                default -> {}
+            }
+        });
 
         activeHandle = handle;
         try {
@@ -211,7 +224,7 @@ public class Main {
 
     // --- Inference command ---
 
-    private static void sendInference(Scanner scanner, InferencePriorityService inferenceService, boolean local) {
+    private static void sendInference(Scanner scanner, InferenceService inferenceService, boolean local) {
         System.out.print("prompt> ");
         if (!scanner.hasNextLine()) return;
         String prompt = scanner.nextLine().trim();
@@ -220,21 +233,26 @@ public class Main {
             return;
         }
 
-        byte[] request = prompt.getBytes(StandardCharsets.UTF_8);
+        InferenceRequest request = new InferenceRequest(prompt);
         CountDownLatch done = new CountDownLatch(1);
 
-        OnStateChange callback = (event) -> {
+        OnStateChange callback = event -> {
             switch (event) {
                 case RequestEvent.Processing p ->
                         System.out.println((local ? "Running locally..." : "Sending to remote peer..."));
-                case RequestEvent.StreamData d ->
-                        System.out.print(new String(d.data(), StandardCharsets.UTF_8));
+                case RequestEvent.StreamData d -> {
+                    System.out.print(new String(d.raw(), StandardCharsets.UTF_8));
+                }
                 case RequestEvent.Succeeded s -> {
                     System.out.println();
                     done.countDown();
                 }
                 case RequestEvent.Failed f -> {
                     System.out.println("\nInference failed: " + f.reason());
+                    done.countDown();
+                }
+                case RequestEvent.Cancelled c -> {
+                    System.out.println("\nInference cancelled.");
                     done.countDown();
                 }
             }
@@ -327,32 +345,34 @@ public class Main {
             Files.createDirectories(outputPath.getParent());
             FileOutputStream fos = new FileOutputStream(outputPath.toFile());
 
-            ServiceHandle handle = fileDownloadService.downloadFrom(
-                    remotePath,
-                    (event) -> {
-                        switch (event) {
-                            case RequestEvent.Processing p ->
-                                    System.out.println("Downloading...");
-                            case RequestEvent.StreamData d -> {
-                                try {
-                                    fos.write(d.data());
-                                } catch (IOException e) {
-                                    System.out.println("Write error: " + e.getMessage());
-                                }
-                            }
-                            case RequestEvent.Succeeded s -> {
-                                try { fos.close(); } catch (IOException ignored) {}
-                                System.out.println("Download complete: " + outputPath);
-                                done.countDown();
-                            }
-                            case RequestEvent.Failed f -> {
-                                try { fos.close(); } catch (IOException ignored) {}
-                                System.out.println("Download failed: " + f.reason());
-                                done.countDown();
-                            }
+            ServiceHandle handle = fileDownloadService.downloadFrom(remotePath, event -> {
+                switch (event) {
+                    case RequestEvent.Processing p ->
+                            System.out.println("Downloading...");
+                    case RequestEvent.StreamData d -> {
+                        try {
+                            fos.write(d.raw());
+                        } catch (IOException e) {
+                            System.out.println("Write error: " + e.getMessage());
                         }
                     }
-            );
+                    case RequestEvent.Succeeded s -> {
+                        try { fos.close(); } catch (IOException ignored) {}
+                        System.out.println("Download complete: " + outputPath);
+                        done.countDown();
+                    }
+                    case RequestEvent.Failed f -> {
+                        try { fos.close(); } catch (IOException ignored) {}
+                        System.out.println("Download failed: " + f.reason());
+                        done.countDown();
+                    }
+                    case RequestEvent.Cancelled c -> {
+                        try { fos.close(); } catch (IOException ignored) {}
+                        System.out.println("Download cancelled.");
+                        done.countDown();
+                    }
+                }
+            });
 
             activeHandle = handle;
             done.await();
@@ -387,6 +407,7 @@ public class Main {
                     sharedDir = Path.of(dir);
                 }
                 case "--debug-port" -> config.debugPort(Integer.parseInt(args[++i]));
+                case "--http-port" -> config.httpPort(Integer.parseInt(args[++i]));
 
                 case "--help" -> {
                     printUsage();
@@ -416,6 +437,7 @@ public class Main {
                   --idle-timeout <ms>                        Idle timeout between data messages in ms (default: 10000)
                   --shared-dir <path>                        Shared file directory (default: ~/mosaic-shared)
                   --debug-port <port>                        Debug HTTP server port (disabled if not set)
+                  --http-port <port>                         Mosaic web UI + API port (disabled if not set)
 
                   --help                                     Show this help
 

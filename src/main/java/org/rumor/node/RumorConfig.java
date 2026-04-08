@@ -20,6 +20,7 @@ public class RumorConfig {
     private long requestTimeoutMs = 300_000;    // overall max time for a request (5 min)
     private long requestIdleTimeoutMs = 60_000; // max time between data messages (60s)
     private int debugPort = -1;                 // -1 = disabled
+    private int httpPort = -1;                  // -1 = disabled
 
 
     public RumorConfig host(String host) {
@@ -72,6 +73,11 @@ public class RumorConfig {
         return this;
     }
 
+    public RumorConfig httpPort(int port) {
+        this.httpPort = port;
+        return this;
+    }
+
 
 
     public String host() { return host; }
@@ -84,6 +90,7 @@ public class RumorConfig {
     public long requestTimeoutMs() { return requestTimeoutMs; }
     public long requestIdleTimeoutMs() { return requestIdleTimeoutMs; }
     public int debugPort() { return debugPort; }
+    public int httpPort() { return httpPort; }
 
 
 

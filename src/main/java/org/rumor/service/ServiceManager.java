@@ -36,6 +36,7 @@ import java.util.function.Predicate;
  * <p>Also implements {@link ClusterView} so that services can query
  * cluster state without touching gossip internals.
  */
+@SuppressWarnings({"rawtypes", "unchecked"})
 public class ServiceManager implements ClusterView {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceManager.class);
@@ -56,12 +57,14 @@ public class ServiceManager implements ClusterView {
     private final long requestTimeoutMs;
     private final long requestIdleTimeoutMs;
 
-    // --- Client-side: tracks pending outbound requests ---
+    // Client-side: tracks pending outbound requests
     private final Map<Integer, PendingRequest> pendingRequests = new ConcurrentHashMap<>();
 
-    // --- Server-side: streaming ---
+    // Server-side: streaming
     private final Map<Integer, PendingStream> pendingStreams = new ConcurrentHashMap<>();
     private final Map<Integer, Future<?>> activeStreams = new ConcurrentHashMap<>();
+    // Server-side: handles for cooperative cancellation
+    private final Map<Integer, ServiceHandle> serverSideHandles = new ConcurrentHashMap<>();
     private final ExecutorService streamExecutor;
 
     // State publishers scheduled for periodic updates
@@ -91,9 +94,49 @@ public class ServiceManager implements ClusterView {
         this.onRegistrationChanged = callback;
     }
 
-    // --- Registration ---
+    // Global concurrency config
+
+    private ThreadPoolExecutor globalRemoteExecutor;
+    private ThreadPoolExecutor globalLocalExecutor;
+
+    /**
+     * Sets shared executor pools applied to all services without a per-service config.
+     * Must be called before {@link #register(RService)}.
+     */
+    public void setGlobalServiceConfig(RService.Config config) {
+        this.globalRemoteExecutor = buildGlobalExecutor("global-remote",
+                config.remoteThreads(), config.remoteQueueCapacity());
+        this.globalLocalExecutor  = buildGlobalExecutor("global-local",
+                config.localThreads(), config.localQueueCapacity());
+    }
+
+    private ThreadPoolExecutor buildGlobalExecutor(String label, int threads, int queueCapacity) {
+        AtomicInteger counter = new AtomicInteger(1);
+        BlockingQueue<Runnable> queue = queueCapacity > 0
+                ? new ArrayBlockingQueue<>(queueCapacity)
+                : new SynchronousQueue<>();
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                threads, threads,
+                60L, TimeUnit.SECONDS,
+                queue,
+                r -> {
+                    Thread t = new Thread(r, label + "-" + counter.getAndIncrement());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.AbortPolicy()
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    // Registration
 
     public void register(RService service) {
+        if (globalRemoteExecutor != null && !service.hasExecutors()) {
+            service.setSharedExecutors(globalRemoteExecutor, globalLocalExecutor);
+        }
+        service.resolveCodecs();
         String name = service.serviceName();
         services.put(name, service);
         service.setManager(this);
@@ -103,6 +146,15 @@ public class ServiceManager implements ClusterView {
             scheduleStateKeyMethods(service);
         }
         fireRegistrationChanged();
+    }
+
+    /**
+     * Registers a service with a per-service concurrency config.
+     * Takes precedence over any global config set via {@link #setGlobalServiceConfig}.
+     */
+    public void register(RService service, RService.Config config) {
+        service.initLocalExecutors(config);
+        register(service);
     }
 
     public Set<String> getRegisteredNames() {
@@ -115,7 +167,7 @@ public class ServiceManager implements ClusterView {
         }
     }
 
-    // --- ClusterView implementation ---
+    // ClusterView implementation
 
     @Override
     public Map<NodeId, String> stateForKey(String key) {
@@ -152,20 +204,21 @@ public class ServiceManager implements ClusterView {
         return localId;
     }
 
-    // ====================================================================
     //  Client-side: sending requests
-    // ====================================================================
 
     /**
      * Send a request to a remote peer offering the named service.
      * Works for both default and {@link Streamable} services —
      * the server decides the protocol after receiving SERVICE_REQUEST.
+     *
+     * <p>The callback operates on raw {@code byte[]} events — the calling
+     * {@link RService} wraps it to deserialize typed responses.
      */
-    public void sendRequest(String serviceName, byte[] request, OnStateChange onStateChange,
+    public void sendRequest(String serviceName, byte[] request, OnStateChange<byte[]> onStateChange,
                             Predicate<Map<String, String>> peerFilter, ServiceHandle handle) {
         NodeId target = pickNode(serviceName, peerFilter);
         if (target == null) {
-            onStateChange.accept(new RequestEvent.Failed("No live node found offering service '" + serviceName + "'"));
+            onStateChange.accept(new RequestEvent.Failed<>("No live node found offering service '" + serviceName + "'"));
             log.warn("No live node found offering service '{}'", serviceName);
             return;
         }
@@ -174,7 +227,7 @@ public class ServiceManager implements ClusterView {
     }
 
     private void sendRequestTo(NodeId target, String serviceName, byte[] request,
-                                OnStateChange onStateChange, ServiceHandle handle) {
+                                OnStateChange<byte[]> onStateChange, ServiceHandle handle) {
         try {
             Channel channel = connectionManager.getChannel(target);
             if (channel == null) {
@@ -207,11 +260,11 @@ public class ServiceManager implements ClusterView {
             buf.put(request);
 
             channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_REQUEST, payload));
-            onStateChange.accept(new RequestEvent.Processing());
+            onStateChange.accept(new RequestEvent.Processing<>());
             log.debug("Sent request {} for service '{}' to {}", requestId, serviceName, target);
 
         } catch (Exception e) {
-            onStateChange.accept(new RequestEvent.Failed("Failed to send request: " + e.getMessage()));
+            onStateChange.accept(new RequestEvent.Failed<>("Failed to send request: " + e.getMessage()));
             log.error("Failed to send request for service '{}' to {}", serviceName, target, e);
         }
     }
@@ -220,7 +273,7 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Failed(reason));
+            pending.onStateChange.accept(new RequestEvent.Failed<>(reason));
             log.warn("Request {} timed out: {}", requestId, reason);
 
             // Notify the server so it can stop work
@@ -235,13 +288,13 @@ public class ServiceManager implements ClusterView {
     /**
      * Cancels a pending request initiated by the caller via {@link ServiceHandle#cancel()}.
      * Removes the pending request, cancels timeouts, notifies the caller with a
-     * {@link RequestEvent.Failed} event, and sends SERVICE_CANCEL to the server.
+     * {@link RequestEvent.Cancelled} event, and sends SERVICE_CANCEL to the server.
      */
     private void cancelByHandle(int requestId) {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Failed("Cancelled"));
+            pending.onStateChange.accept(new RequestEvent.Cancelled<>());
             log.info("Request {} cancelled by caller", requestId);
 
             if (pending.channel.isActive()) {
@@ -262,9 +315,7 @@ public class ServiceManager implements ClusterView {
         ctx.writeAndFlush(new RumorFrame(MessageType.SERVICE_CANCEL, cancelPayload));
     }
 
-    // ====================================================================
     //  Client-side: incoming response handlers
-    // ====================================================================
 
     /** Handles SERVICE_RESPONSE — single complete response for an RService request. */
     public void handleServiceResponse(ChannelHandlerContext ctx, byte[] payload) {
@@ -276,7 +327,7 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Succeeded(data));
+            pending.onStateChange.accept(new RequestEvent.Succeeded<>(data));
             log.debug("Request {} completed with {} bytes", requestId, data.length);
         } else {
             log.warn("Received response for unknown request {}", requestId);
@@ -294,7 +345,7 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Failed(reason));
+            pending.onStateChange.accept(new RequestEvent.Failed<>(reason));
             log.warn("Request {} failed remotely: {}", requestId, reason);
         } else {
             log.warn("Received error for unknown request {}", requestId);
@@ -340,7 +391,7 @@ public class ServiceManager implements ClusterView {
         if (pending != null) {
             pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
                     () -> timeoutRequest(requestId, "Idle timeout (no stream data received within " + requestIdleTimeoutMs + "ms)"));
-            pending.onStateChange.accept(new RequestEvent.StreamData(data));
+            pending.onStateChange.accept(new RequestEvent.StreamData<>(data));
         } else {
             log.warn("Received stream data for unknown request {}, sending cancel", requestId);
             sendCancel(ctx, requestId);
@@ -354,7 +405,7 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Succeeded(null));
+            pending.onStateChange.accept(new RequestEvent.Succeeded<>(null));
             log.debug("Stream {} completed successfully", requestId);
         } else {
             log.warn("Received stream end for unknown request {}", requestId);
@@ -372,7 +423,7 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending != null) {
             pending.cancelTimeouts();
-            pending.onStateChange.accept(new RequestEvent.Failed(reason));
+            pending.onStateChange.accept(new RequestEvent.Failed<>(reason));
             log.warn("Stream {} failed remotely: {}", requestId, reason);
         } else {
             log.warn("Received stream error for unknown request {}", requestId);
@@ -380,16 +431,19 @@ public class ServiceManager implements ClusterView {
         }
     }
 
-    // ====================================================================
     //  Server-side: cancellation
-    // ====================================================================
 
     /**
      * Handles SERVICE_CANCEL — client no longer needs the response.
-     * Cancels any pending handshake or active stream for the given request.
+     * Cancels the server-side handle for cooperative cancellation, then
+     * cancels any pending handshake or active stream for the given request.
      */
     public void handleServiceCancel(ChannelHandlerContext ctx, byte[] payload) {
         int requestId = ByteBuffer.wrap(payload).getInt();
+
+        // Cooperative cancellation — signals isCancelled() in write() checks
+        ServiceHandle serverHandle = serverSideHandles.remove(requestId);
+        if (serverHandle != null) serverHandle.cancel();
 
         // Cancel pending handshake if still waiting
         PendingStream pendingStream = pendingStreams.remove(requestId);
@@ -401,7 +455,7 @@ public class ServiceManager implements ClusterView {
             return;
         }
 
-        // Cancel active stream if running
+        // Interrupt active stream thread
         Future<?> future = activeStreams.remove(requestId);
         if (future != null) {
             future.cancel(true);
@@ -412,9 +466,7 @@ public class ServiceManager implements ClusterView {
         log.debug("Received cancel for unknown request {} (may have already completed)", requestId);
     }
 
-    // ====================================================================
     //  Server-side: incoming request handlers
-    // ====================================================================
 
     /** Handles SERVICE_REQUEST — dispatches to RService or initiates streaming handshake. */
     public void handleServiceRequest(ChannelHandlerContext ctx, byte[] payload) {
@@ -440,21 +492,30 @@ public class ServiceManager implements ClusterView {
         }
 
         if (!service.isStreamable()) {
-            // Request/response: serve on the I/O thread, single-write
-            RemoteServiceResponse response = new RemoteServiceResponse(requestId, ctx.channel());
+            // Request/response: serve on the I/O thread (or remote executor), single-write
+            ServiceHandle serverHandle = new ServiceHandle();
+            serverSideHandles.put(requestId, serverHandle);
+            ServiceRequest serviceRequest = new ServiceRequest(requestData, serverHandle, service.requestCodec);
+            RemoteServiceResponse response = new RemoteServiceResponse(requestId, ctx.channel(), serverHandle, service.responseCodec);
             try {
-                service.serve(requestData, response);
+                service.executeServe(serviceRequest, response);
                 response.close();
+            } catch (java.util.concurrent.CancellationException e) {
+                log.info("Non-streaming request {} was cancelled", requestId);
             } catch (Exception e) {
                 log.error("Error serving request {} (service='{}')", requestId, serviceName, e);
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 response.fail(msg.getBytes(StandardCharsets.UTF_8));
+            } finally {
+                serverSideHandles.remove(requestId);
             }
             return;
         }
 
         // Streaming: handshake then serve on dedicated thread
-        PendingStream pending = new PendingStream(requestId, ctx, service, requestData);
+        ServiceHandle serverHandle = new ServiceHandle();
+        serverSideHandles.put(requestId, serverHandle);
+        PendingStream pending = new PendingStream(requestId, ctx, service, requestData, serverHandle);
         pendingStreams.put(requestId, pending);
 
         pending.handshakeTimeout = timeoutScheduler.schedule(() -> {
@@ -490,26 +551,29 @@ public class ServiceManager implements ClusterView {
 
         log.debug("Client ready for stream {}, starting serve() on stream-worker", requestId);
 
+        ServiceRequest serviceRequest = new ServiceRequest(pending.requestData, pending.handle, pending.service.requestCodec);
+        RemoteStreamingServiceResponse response = new RemoteStreamingServiceResponse(
+                requestId, pending.ctx.channel(), pending.handle, pending.service.responseCodec);
+
         Future<?> future = streamExecutor.submit(() -> {
-            RemoteStreamingServiceResponse response = new RemoteStreamingServiceResponse(
-                    requestId, pending.ctx.channel(), () -> {
-                        activeStreams.remove(requestId);
-                    });
             try {
-                pending.service.serve(pending.requestData, response);
+                pending.service.executeServe(serviceRequest, response);
                 response.close();
+            } catch (java.util.concurrent.CancellationException e) {
+                log.info("Streaming request {} was cancelled", requestId);
             } catch (Exception e) {
                 log.error("Error in streaming service for request {}", requestId, e);
                 String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
                 response.fail(msg.getBytes(StandardCharsets.UTF_8));
+            } finally {
+                activeStreams.remove(requestId);
+                serverSideHandles.remove(requestId);
             }
         });
         activeStreams.put(requestId, future);
     }
 
-    // ====================================================================
     //  Node picking
-    // ====================================================================
 
     private NodeId pickNode(String serviceName, Predicate<Map<String, String>> peerFilter) {
         List<NodeId> candidates = new ArrayList<>();
@@ -540,9 +604,7 @@ public class ServiceManager implements ClusterView {
         return candidates.getFirst();
     }
 
-    // ====================================================================
     //  State publishing
-    // ====================================================================
 
     private void scheduleStateKeyMethods(RService service) {
         String prefix = service.serviceName() + ".";
@@ -563,9 +625,7 @@ public class ServiceManager implements ClusterView {
         }
     }
 
-    // ====================================================================
     //  Helpers
-    // ====================================================================
 
     private void sendError(ChannelHandlerContext ctx, int requestId, String message) {
         byte[] msgBytes = message.getBytes(StandardCharsets.UTF_8);
@@ -600,15 +660,15 @@ public class ServiceManager implements ClusterView {
             if (pending.handshakeTimeout != null) pending.handshakeTimeout.cancel(false);
         }
         pendingStreams.clear();
+
+        for (RService service : services.values()) {
+            service.shutdownExecutors();
+        }
     }
 
-    // ====================================================================
     //  Inner classes
-    // ====================================================================
 
-    // ====================================================================
     //  Debug snapshot
-    // ====================================================================
 
     public record ExecutorSnapshot(int activeThreads, int poolSize, int maxPoolSize,
                                    int queueSize, long completedTasks) {}
@@ -636,9 +696,10 @@ public class ServiceManager implements ClusterView {
 
         Map<String, ExecutorPairSnapshot> executorStats = new HashMap<>();
         for (var entry : services.entrySet()) {
-            if (entry.getValue() instanceof RPriorityService ps) {
+            RService svc = entry.getValue();
+            if (svc.hasExecutors()) {
                 executorStats.put(entry.getKey(),
-                        new ExecutorPairSnapshot(snap(ps.remoteExecutor()), snap(ps.localExecutor())));
+                        new ExecutorPairSnapshot(snap(svc.remoteExecutor()), snap(svc.localExecutor())));
             }
         }
 
@@ -654,14 +715,14 @@ public class ServiceManager implements ClusterView {
     /** Tracks a pending outbound request (client side). */
     private static class PendingRequest {
         final int requestId;
-        final OnStateChange onStateChange;
+        final OnStateChange<byte[]> onStateChange;
         final Channel channel;
         final long createdAt;
         volatile ScheduledFuture<?> overallTimeout;
         volatile ScheduledFuture<?> idleTimeout;
         volatile boolean streaming;
 
-        PendingRequest(int requestId, OnStateChange onStateChange, Channel channel) {
+        PendingRequest(int requestId, OnStateChange<byte[]> onStateChange, Channel channel) {
             this.requestId = requestId;
             this.onStateChange = onStateChange;
             this.channel = channel;
@@ -686,14 +747,16 @@ public class ServiceManager implements ClusterView {
         final ChannelHandlerContext ctx;
         final RService service;
         final byte[] requestData;
+        final ServiceHandle handle;
         volatile ScheduledFuture<?> handshakeTimeout;
 
         PendingStream(int requestId, ChannelHandlerContext ctx,
-                      RService service, byte[] requestData) {
+                      RService service, byte[] requestData, ServiceHandle handle) {
             this.requestId = requestId;
             this.ctx = ctx;
             this.service = service;
             this.requestData = requestData;
+            this.handle = handle;
         }
     }
 }

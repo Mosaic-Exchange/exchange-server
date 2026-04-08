@@ -2,7 +2,6 @@ package org.rumor.node;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import org.rumor.debug.DebugHttpServer;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.EvictionService;
 import org.rumor.gossip.GossipService;
@@ -13,7 +12,6 @@ import org.rumor.transport.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 
@@ -35,7 +33,6 @@ public class Rumor {
     private final GossipService gossipService;
     private final ServiceManager serviceManager;
     private final EvictionService evictionService;
-    private DebugHttpServer debugHttpServer;
 
     public Rumor(RumorConfig config) {
         this.config = config;
@@ -75,23 +72,14 @@ public class Rumor {
             evictionService.start();
         }
 
-        if (config.debugPort() > 0) {
-            try {
-                debugHttpServer = new DebugHttpServer(config.debugPort(), serviceManager,
-                        localId, this::getClusterState, System.currentTimeMillis());
-                debugHttpServer.start();
-            } catch (IOException e) {
-                log.warn("Failed to start debug HTTP server on port {}: {}", config.debugPort(), e.getMessage());
-            }
-        }
-
         log.info("Rumor started: {} (type={})", localId, config.nodeType());
     }
 
+    public ServiceManager serviceManager() {
+        return serviceManager;
+    }
+
     public void stop() {
-        if (debugHttpServer != null) {
-            debugHttpServer.stop();
-        }
         if (evictionService != null) {
             evictionService.stop();
         }
@@ -103,11 +91,34 @@ public class Rumor {
     }
 
     /**
-     * Register a service. Streaming behavior is determined by the
+     * Sets a global concurrency config applied to all services that do not have
+     * their own per-service config. All such services share the same executor pools,
+     * so the thread counts represent cluster-wide limits across those services.
+     *
+     * <p>Must be called before {@link #register(RService)}. Per-service configs
+     * passed to {@link #register(RService, RService.Config)} always take precedence.
+     */
+    public Rumor globalServiceConfig(RService.Config config) {
+        serviceManager.setGlobalServiceConfig(config);
+        return this;
+    }
+
+    /**
+     * Registers a service. When a global config has been set via
+     * {@link #globalServiceConfig(RService.Config)}, the service will use the shared
+     * global executor pools. Streaming behavior is determined by the
      * {@link org.rumor.service.Streamable} annotation on the service class.
      */
     public void register(RService service) {
         serviceManager.register(service);
+    }
+
+    /**
+     * Registers a service with a per-service concurrency config.
+     * This overrides any global config set via {@link #globalServiceConfig(RService.Config)}.
+     */
+    public void register(RService service, RService.Config localConfig) {
+        serviceManager.register(service, localConfig);
     }
 
     public void setAppState(String key, String value) {
@@ -130,7 +141,7 @@ public class Rumor {
         return config;
     }
 
-    // --- Frame routing ---
+    // Frame routing
 
     private void onFrame(ChannelHandlerContext ctx, RumorFrame frame) {
         switch (frame.type()) {
