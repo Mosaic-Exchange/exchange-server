@@ -3,7 +3,7 @@ package org.rumor.app;
 import org.rumor.gossip.NodeId;
 import org.rumor.service.MaintainState;
 import org.rumor.service.OnStateChange;
-import org.rumor.service.RService;
+import org.rumor.service.DistributedService;
 import org.rumor.service.ServiceHandle;
 import org.rumor.service.ServiceRequest;
 import org.rumor.service.ServiceResponse;
@@ -34,7 +34,7 @@ import java.util.function.Predicate;
  */
 @Streamable
 @MaintainState
-public class FileDownloadService extends RService {
+public class FileDownloadService extends DistributedService {
 
     public static final String STATE_KEY = "SHARED_FILES";
     private static final int READ_BUFFER_SIZE = 64 * 1024;

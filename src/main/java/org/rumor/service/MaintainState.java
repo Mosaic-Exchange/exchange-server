@@ -6,7 +6,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks an {@link RService} as one that publishes application state into
+ * Marks an {@link DistributedService} as one that publishes application state into
  * the gossip protocol.
  *
  * <p>When present, the framework scans the service class for methods

@@ -3,14 +3,14 @@ package org.rumor.service;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Handle returned by {@link RService#dispatch} and {@link RService#request}
+ * Handle returned by {@link DistributedService#dispatch} and {@link DistributedService#request}
  * that allows the caller to cancel an in-progress service invocation.
  *
- * <p>For local requests ({@link RService#request}), cancellation is
+ * <p>For local requests ({@link DistributedService#request}), cancellation is
  * cooperative: the next {@link ServiceResponse#write} checks the
  * cancelled flag and throws, unwinding the {@code serve()} call.
  *
- * <p>For remote dispatches ({@link RService#dispatch}), the framework
+ * <p>For remote dispatches ({@link DistributedService#dispatch}), the framework
  * sends a {@code SERVICE_CANCEL} frame to the remote peer and immediately
  * delivers a {@link RequestEvent.Failed} event to the caller.
  *

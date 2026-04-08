@@ -47,7 +47,7 @@ public class ServiceManager implements ClusterView {
     private final GossipService gossipService;
     private final NodeId localId;
 
-    private final Map<String, RService> services = new ConcurrentHashMap<>();
+    private final Map<String, DistributedService> services = new ConcurrentHashMap<>();
 
     private final AtomicInteger requestIdGenerator = new AtomicInteger(1);
     private final ScheduledExecutorService timeoutScheduler;
@@ -101,9 +101,9 @@ public class ServiceManager implements ClusterView {
 
     /**
      * Sets shared executor pools applied to all services without a per-service config.
-     * Must be called before {@link #register(RService)}.
+     * Must be called before {@link #register(DistributedService)}.
      */
-    public void setGlobalServiceConfig(RService.Config config) {
+    public void setGlobalServiceConfig(DistributedService.Config config) {
         this.globalRemoteExecutor = buildGlobalExecutor("global-remote",
                 config.remoteThreads(), config.remoteQueueCapacity());
         this.globalLocalExecutor  = buildGlobalExecutor("global-local",
@@ -132,7 +132,7 @@ public class ServiceManager implements ClusterView {
 
     // Registration
 
-    public void register(RService service) {
+    public void register(DistributedService service) {
         if (globalRemoteExecutor != null && !service.hasExecutors()) {
             service.setSharedExecutors(globalRemoteExecutor, globalLocalExecutor);
         }
@@ -152,7 +152,7 @@ public class ServiceManager implements ClusterView {
      * Registers a service with a per-service concurrency config.
      * Takes precedence over any global config set via {@link #setGlobalServiceConfig}.
      */
-    public void register(RService service, RService.Config config) {
+    public void register(DistributedService service, DistributedService.Config config) {
         service.initLocalExecutors(config);
         register(service);
     }
@@ -161,9 +161,31 @@ public class ServiceManager implements ClusterView {
         return Collections.unmodifiableSet(new HashSet<>(services.keySet()));
     }
 
+    /**
+     * Returns only the names of services that are not in private mode.
+     * This is what gets published to gossip so peers can discover available services.
+     */
+    public Set<String> getPublicServiceNames() {
+        Set<String> publicNames = new HashSet<>();
+        for (var entry : services.entrySet()) {
+            if (!entry.getValue().isPrivate()) {
+                publicNames.add(entry.getKey());
+            }
+        }
+        return Collections.unmodifiableSet(publicNames);
+    }
+
+    /**
+     * Re-publishes the set of public services to gossip.
+     * Called by {@link DistributedService} when private/public mode changes.
+     */
+    public void republishServices() {
+        fireRegistrationChanged();
+    }
+
     private void fireRegistrationChanged() {
         if (onRegistrationChanged != null) {
-            onRegistrationChanged.accept(getRegisteredNames());
+            onRegistrationChanged.accept(getPublicServiceNames());
         }
     }
 
@@ -212,7 +234,7 @@ public class ServiceManager implements ClusterView {
      * the server decides the protocol after receiving SERVICE_REQUEST.
      *
      * <p>The callback operates on raw {@code byte[]} events — the calling
-     * {@link RService} wraps it to deserialize typed responses.
+     * {@link DistributedService} wraps it to deserialize typed responses.
      */
     public void sendRequest(String serviceName, byte[] request, OnStateChange<byte[]> onStateChange,
                             Predicate<Map<String, String>> peerFilter, ServiceHandle handle) {
@@ -484,7 +506,7 @@ public class ServiceManager implements ClusterView {
         log.info("Received SERVICE_REQUEST id={} service='{}' from={} ({} bytes)",
                 requestId, serviceName, ctx.channel().remoteAddress(), requestData.length);
 
-        RService service = services.get(serviceName);
+        DistributedService service = services.get(serviceName);
         if (service == null) {
             log.warn("No service registered for '{}', ignoring request {}", serviceName, requestId);
             sendError(ctx, requestId, "No service registered for '" + serviceName + "'");
@@ -606,7 +628,7 @@ public class ServiceManager implements ClusterView {
 
     //  State publishing
 
-    private void scheduleStateKeyMethods(RService service) {
+    private void scheduleStateKeyMethods(DistributedService service) {
         String prefix = service.serviceName() + ".";
         for (Method method : service.getClass().getMethods()) {
             StateKey ann = method.getAnnotation(StateKey.class);
@@ -661,7 +683,7 @@ public class ServiceManager implements ClusterView {
         }
         pendingStreams.clear();
 
-        for (RService service : services.values()) {
+        for (DistributedService service : services.values()) {
             service.shutdownExecutors();
         }
     }
@@ -696,7 +718,7 @@ public class ServiceManager implements ClusterView {
 
         Map<String, ExecutorPairSnapshot> executorStats = new HashMap<>();
         for (var entry : services.entrySet()) {
-            RService svc = entry.getValue();
+            DistributedService svc = entry.getValue();
             if (svc.hasExecutors()) {
                 executorStats.put(entry.getKey(),
                         new ExecutorPairSnapshot(snap(svc.remoteExecutor()), snap(svc.localExecutor())));
@@ -745,13 +767,13 @@ public class ServiceManager implements ClusterView {
     private static class PendingStream {
         final int requestId;
         final ChannelHandlerContext ctx;
-        final RService service;
+        final DistributedService service;
         final byte[] requestData;
         final ServiceHandle handle;
         volatile ScheduledFuture<?> handshakeTimeout;
 
         PendingStream(int requestId, ChannelHandlerContext ctx,
-                      RService service, byte[] requestData, ServiceHandle handle) {
+                      DistributedService service, byte[] requestData, ServiceHandle handle) {
             this.requestId = requestId;
             this.ctx = ctx;
             this.service = service;

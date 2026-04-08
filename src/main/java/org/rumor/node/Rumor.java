@@ -6,7 +6,7 @@ import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.EvictionService;
 import org.rumor.gossip.GossipService;
 import org.rumor.gossip.NodeId;
-import org.rumor.service.RService;
+import org.rumor.service.DistributedService;
 import org.rumor.service.ServiceManager;
 import org.rumor.transport.*;
 import org.slf4j.Logger;
@@ -61,8 +61,8 @@ public class Rumor {
             String csv = String.join(",", names);
             gossipService.setLocalState("SERVICES", csv);
         });
-        // Publish any services that were registered before start()
-        Set<String> existing = serviceManager.getRegisteredNames();
+        // Publish any public services that were registered before start()
+        Set<String> existing = serviceManager.getPublicServiceNames();
         if (!existing.isEmpty()) {
             gossipService.setLocalState("SERVICES", String.join(",", existing));
         }
@@ -95,29 +95,29 @@ public class Rumor {
      * their own per-service config. All such services share the same executor pools,
      * so the thread counts represent cluster-wide limits across those services.
      *
-     * <p>Must be called before {@link #register(RService)}. Per-service configs
-     * passed to {@link #register(RService, RService.Config)} always take precedence.
+     * <p>Must be called before {@link #register(DistributedService)}. Per-service configs
+     * passed to {@link #register(DistributedService, DistributedService.Config)} always take precedence.
      */
-    public Rumor globalServiceConfig(RService.Config config) {
+    public Rumor globalServiceConfig(DistributedService.Config config) {
         serviceManager.setGlobalServiceConfig(config);
         return this;
     }
 
     /**
      * Registers a service. When a global config has been set via
-     * {@link #globalServiceConfig(RService.Config)}, the service will use the shared
+     * {@link #globalServiceConfig(DistributedService.Config)}, the service will use the shared
      * global executor pools. Streaming behavior is determined by the
      * {@link org.rumor.service.Streamable} annotation on the service class.
      */
-    public void register(RService service) {
+    public void register(DistributedService service) {
         serviceManager.register(service);
     }
 
     /**
      * Registers a service with a per-service concurrency config.
-     * This overrides any global config set via {@link #globalServiceConfig(RService.Config)}.
+     * This overrides any global config set via {@link #globalServiceConfig(DistributedService.Config)}.
      */
-    public void register(RService service, RService.Config localConfig) {
+    public void register(DistributedService service, DistributedService.Config localConfig) {
         serviceManager.register(service, localConfig);
     }
 

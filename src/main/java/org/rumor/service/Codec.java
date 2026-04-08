@@ -7,7 +7,7 @@ import java.lang.annotation.Target;
 
 /**
  * Specifies a custom {@link ServiceCodec} for a {@link ServiceRequest} or
- * {@link ServiceResponse} parameter on a {@link RService#serve} method.
+ * {@link ServiceResponse} parameter on a {@link DistributedService#serve} method.
  *
  * <p>Place this annotation on the parameters of your {@code serve()} override
  * to control how request/response data is serialized for remote calls:

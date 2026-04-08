@@ -6,10 +6,10 @@ package org.rumor.service;
  *
  * <p>For remote requests, the payload arrives as raw bytes and is decoded
  * lazily on the first call to {@link #data()} using the service's codec.
- * For local requests ({@link RService#request}), the typed object is passed
+ * For local requests ({@link DistributedService#request}), the typed object is passed
  * directly — no serialization occurs.
  *
- * <p>Implementations of {@link RService#serve(ServiceRequest, ServiceResponse)}
+ * <p>Implementations of {@link DistributedService#serve(ServiceRequest, ServiceResponse)}
  * receive this object. Use {@link #isCancelled()} in long-running loops as a
  * cooperative early-exit point — the framework will also throw
  * {@link java.util.concurrent.CancellationException} from the next

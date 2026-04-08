@@ -339,6 +339,35 @@ When a pool is at capacity, the request is rejected immediately with
 `RequestEvent.Failed("Service at capacity")`. Remote and local pools are separate, so a flood
 of inbound requests cannot starve local callers.
 
+## Private / Public Mode
+
+By default, every registered service is **public** — its name is gossiped to the cluster so
+remote peers can discover and invoke it. You can toggle a service into **private mode** to stop
+advertising it. The service remains registered locally and can still handle local `request()`
+calls, but remote peers will no longer see it in the `SERVICES` gossip key.
+
+```java
+// Stop advertising to the cluster
+inferenceService.enablePrivateMode();
+
+// Use the service locally only
+inferenceService.request(myRequest, callback);
+
+// Re-advertise when ready
+inferenceService.enablePublicMode();
+```
+
+Check current visibility:
+
+```java
+inferenceService.isPrivate();   // true if in private mode
+```
+
+The change takes effect immediately — the next gossip round will reflect the updated service
+list. Peers that already have an open connection can still send requests to a private service
+(the framework does not reject them), but new peer lookups via `dispatch()` on other nodes
+will no longer route to this node for that service.
+
 ## Threading Model
 
 | Context | Thread | Blocking? |

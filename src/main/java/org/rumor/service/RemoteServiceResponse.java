@@ -10,7 +10,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.CancellationException;
 
 /**
- * Single-write response for {@link RService} requests over the network.
+ * Single-write response for {@link DistributedService} requests over the network.
  *
  * <p>{@link #write(Object) write(T)} encodes the typed response via the service's codec,
  * then buffers the bytes. {@link #write(byte[])} stores raw bytes directly without

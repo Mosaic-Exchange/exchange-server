@@ -12,11 +12,11 @@ import org.rumor.node.Rumor;
 import org.rumor.node.RumorConfig;
 import org.rumor.service.OnStateChange;
 import org.rumor.service.RequestEvent;
-import org.rumor.service.RService;
+import org.rumor.service.DistributedService;
 import org.rumor.service.ServiceHandle;
 import org.rumor.service.ServiceRequest;
 import org.rumor.service.ServiceResponse;
-import org.rumor.service.RService.Config;
+import org.rumor.service.DistributedService.Config;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -49,7 +49,7 @@ import sun.misc.Signal;
  */
 public class Main {
 
-    static class HelloService extends RService {
+    static class HelloService extends DistributedService {
 
         @Override
         public void serve(ServiceRequest request, ServiceResponse response) {

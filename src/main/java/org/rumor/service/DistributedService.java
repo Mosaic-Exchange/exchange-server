@@ -49,7 +49,7 @@ import java.util.function.Predicate;
  * </ul>
  *
  * <p><b>Concurrency control</b> (optional, configured via
- * {@link org.rumor.node.Rumor#register(RService, Config)}):
+ * {@link org.rumor.node.Rumor#register(DistributedService, Config)}):
  * <ul>
  *   <li>A {@link Config} can be supplied per-service or globally for all services.</li>
  *   <li>Per-service config takes precedence over the global config.</li>
@@ -67,14 +67,14 @@ import java.util.function.Predicate;
  * @param <Req>  the request data type ({@code byte[]} when extending raw)
  * @param <Resp> the response data type ({@code byte[]} when extending raw)
  */
-public abstract class RService<Req, Resp> {
+public abstract class DistributedService<Req, Resp> {
 
     //  Concurrency configuration
 
     /**
      * Bounded-concurrency configuration for a service's remote and local executor pools.
      *
-     * <p>Pass to {@link org.rumor.node.Rumor#register(RService, Config)} for per-service
+     * <p>Pass to {@link org.rumor.node.Rumor#register(DistributedService, Config)} for per-service
      * configuration, or to {@link org.rumor.node.Rumor#globalServiceConfig(Config)} to
      * apply the same pools to all services that do not have their own config.
      */
@@ -114,6 +114,7 @@ public abstract class RService<Req, Resp> {
     private ThreadPoolExecutor remoteExecutor;
     private ThreadPoolExecutor localExecutor;
     private boolean ownsExecutors;
+    private volatile boolean privateMode = false;
 
     /** Codec for encoding/decoding the request type. Set during registration. */
     @SuppressWarnings("rawtypes")
@@ -320,7 +321,7 @@ public abstract class RService<Req, Resp> {
     }
 
     private static Method findServeMethod(Class<?> clazz) {
-        for (Class<?> c = clazz; c != null && c != RService.class; c = c.getSuperclass()) {
+        for (Class<?> c = clazz; c != null && c != DistributedService.class; c = c.getSuperclass()) {
             for (Method m : c.getDeclaredMethods()) {
                 if ("serve".equals(m.getName()) && m.getParameterCount() == 2 && !m.isBridge()) {
                     return m;
@@ -365,6 +366,33 @@ public abstract class RService<Req, Resp> {
     }
 
     //  Public accessors
+
+    /**
+     * Puts this service into private mode — it will no longer be advertised
+     * to the cluster via gossip, so remote peers will not discover it.
+     * The service can still handle incoming requests from peers that already know about it.
+     */
+    public void enablePrivateMode() {
+        if (!privateMode) {
+            privateMode = true;
+            if (manager != null) manager.republishServices();
+        }
+    }
+
+    /**
+     * Restores this service to public mode — it will be advertised to the
+     * cluster via gossip so remote peers can discover and invoke it.
+     */
+    public void enablePublicMode() {
+        if (privateMode) {
+            privateMode = false;
+            if (manager != null) manager.republishServices();
+        }
+    }
+
+    public boolean isPrivate() {
+        return privateMode;
+    }
 
     protected ClusterView clusterView() {
         if (manager == null) {

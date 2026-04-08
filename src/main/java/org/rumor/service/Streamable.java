@@ -6,11 +6,11 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks an {@link RService} as a streaming service.
+ * Marks an {@link DistributedService} as a streaming service.
  *
  * <p>When present, the framework will:
  * <ul>
- *   <li>Run {@link RService#serve} on a dedicated thread (not the Netty I/O thread),
+ *   <li>Run {@link DistributedService#serve} on a dedicated thread (not the Netty I/O thread),
  *       so blocking operations are safe.</li>
  *   <li>Allow {@link ServiceResponse#write(byte[])} to be called multiple times
  *       to stream data in chunks.</li>

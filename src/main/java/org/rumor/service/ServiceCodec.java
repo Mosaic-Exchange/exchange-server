@@ -5,7 +5,7 @@ package org.rumor.service;
  * bytes for wire transmission.
  *
  * <p>Implement this interface and reference it via the {@link Codec} annotation
- * on {@link RService#serve} parameters to override the default serialization.
+ * on {@link DistributedService#serve} parameters to override the default serialization.
  *
  * <p>The default codec is identity passthrough for {@code byte[]} types, and
  * Java serialization for any other type. Provide a custom codec for better
