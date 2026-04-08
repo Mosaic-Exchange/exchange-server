@@ -1,4 +1,4 @@
-package org.rumor;
+package org.rumor.service;
 
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.NodeId;
