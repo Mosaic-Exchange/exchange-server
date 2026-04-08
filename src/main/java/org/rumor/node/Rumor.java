@@ -12,6 +12,7 @@ import org.rumor.transport.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,6 +34,7 @@ public class Rumor {
     private final GossipService gossipService;
     private final ServiceManager serviceManager;
     private final EvictionService evictionService;
+    private volatile DebugFileWriter debugFileWriter;
 
     public Rumor(RumorConfig config) {
         this.config = config;
@@ -80,6 +82,9 @@ public class Rumor {
     }
 
     public void stop() {
+        if (debugFileWriter != null) {
+            debugFileWriter.stop();
+        }
         if (evictionService != null) {
             evictionService.stop();
         }
@@ -119,6 +124,28 @@ public class Rumor {
      */
     public void register(DistributedService service, DistributedService.Config localConfig) {
         serviceManager.register(service, localConfig);
+    }
+
+    /**
+     * Registers a file-based debug listener that periodically overwrites the given file
+     * with a snapshot of this node's metrics, services, and cluster topology.
+     *
+     * @param path       the file to write debug output to
+     * @param intervalMs how often to refresh the file (in milliseconds)
+     */
+    public void registerDebug(Path path, long intervalMs) {
+        if (debugFileWriter != null) {
+            debugFileWriter.stop();
+        }
+        debugFileWriter = new DebugFileWriter(path, localId, serviceManager,
+                this::getClusterState, System.currentTimeMillis(), intervalMs);
+    }
+
+    /**
+     * Registers a file-based debug listener with a default 2-second refresh interval.
+     */
+    public void registerDebug(Path path) {
+        registerDebug(path, 2000);
     }
 
     public void setAppState(String key, String value) {

@@ -396,6 +396,29 @@ config.host("0.0.0.0")               // listen address (default: 127.0.0.1)
       .debugPort(9090);               // debug HTTP server (0 = disabled)
 ```
 
+## File-Based Debug Listener
+
+Register a debug file to get a periodically refreshed snapshot of this node's metrics,
+services, and cluster topology — no HTTP server required:
+
+```java
+// Write debug snapshot to a file every 2 seconds (default)
+rumor.registerDebug(Path.of("/tmp/rumor-debug.txt"));
+
+// Custom refresh interval (in milliseconds)
+rumor.registerDebug(Path.of("/tmp/rumor-debug.txt"), 5000);
+```
+
+The file is **overwritten** (not appended) on each tick and includes:
+- Node identity and uptime
+- Pending outbound requests, active server streams, pending handshakes
+- Per-request details (request ID, streaming flag, elapsed time)
+- Per-service executor stats (active threads, pool size, queue depth, completed tasks)
+- Full cluster topology as seen by this node (type, status, heartbeat, all app states)
+
+Calling `registerDebug` again replaces the previous listener. The writer is automatically
+stopped on `rumor.stop()`.
+
 ## Best Practices
 
 1. **Don't block network I/O threads.** Configure `RService.Config` executor pools for any

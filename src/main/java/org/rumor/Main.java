@@ -99,7 +99,7 @@ public class Main {
         rumor.register(fileDownloadService, new Config()
                 .remoteThreads(2)
                 .remoteQueueCapacity(2));
-
+        rumor.registerDebug(Path.of("rumor-debug.txt"));
         rumor.start();
 
         // Start HTTP server if configured
