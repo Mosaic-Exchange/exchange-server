@@ -1,5 +1,3 @@
-package org.rumor.app;
-
 import org.rumor.service.DistributedService;
 import org.rumor.service.ServiceRequest;
 import org.rumor.service.ServiceResponse;

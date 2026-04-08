@@ -1,5 +1,3 @@
-package org.rumor.app;
-
 import org.rumor.gossip.NodeId;
 import org.rumor.service.MaintainState;
 import org.rumor.service.OnStateChange;

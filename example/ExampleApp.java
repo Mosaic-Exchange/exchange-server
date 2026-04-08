@@ -1,12 +1,6 @@
-package org.rumor;
-
-import org.rumor.app.FileDownloadService;
-import org.rumor.app.InferenceRequest;
-import org.rumor.app.InferenceService;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.NodeId;
 import org.rumor.gossip.VersionedValue;
-import org.rumor.http.MosaicHttpServer;
 import org.rumor.node.NodeType;
 import org.rumor.node.Rumor;
 import org.rumor.node.RumorConfig;
@@ -47,7 +41,7 @@ import sun.misc.Signal;
  *   download - Download a file from a remote peer
  *   quit     - Shut down this node
  */
-public class Main {
+public class ExampleApp {
 
     static class HelloService extends DistributedService {
 
@@ -66,7 +60,6 @@ public class Main {
 
     private static Path sharedDir = Path.of(System.getProperty("user.home"), "mosaic-shared");
     private static volatile ServiceHandle activeHandle;
-    private static MosaicHttpServer httpServer;
 
     public static void main(String[] args) throws Exception {
         RumorConfig config = parseArgs(args);
@@ -102,20 +95,6 @@ public class Main {
         rumor.registerDebug(Path.of("rumor-debug.txt"));
         rumor.start();
 
-        // Start HTTP server if configured
-        if (config.httpPort() > 0) {
-            try {
-                httpServer = new MosaicHttpServer(
-                        config.httpPort(), rumor.serviceManager(), rumor.localId(),
-                        rumor::getClusterState, System.currentTimeMillis(),
-                        inferenceService, fileDownloadService, shared);
-                httpServer.start();
-                System.out.println("HTTP server running on port " + config.httpPort());
-            } catch (IOException e) {
-                System.err.println("Failed to start HTTP server: " + e.getMessage());
-            }
-        }
-
         System.out.println();
         System.out.println("Node " + rumor.localId() + " (" + config.nodeType() + ") is running.");
         System.out.println("Shared directory: " + shared);
@@ -138,7 +117,6 @@ public class Main {
                 case "files" -> discoverFiles(fileDownloadService);
                 case "download" -> downloadFile(scanner, fileDownloadService, shared);
                 case "quit", "exit" -> {
-                    if (httpServer != null) httpServer.stop();
                     rumor.stop();
                     System.out.println("Goodbye.");
                     return;
@@ -406,9 +384,6 @@ public class Main {
                     if (dir.startsWith("~")) dir = System.getProperty("user.home") + dir.substring(1);
                     sharedDir = Path.of(dir);
                 }
-                case "--debug-port" -> config.debugPort(Integer.parseInt(args[++i]));
-                case "--http-port" -> config.httpPort(Integer.parseInt(args[++i]));
-
                 case "--help" -> {
                     printUsage();
                     System.exit(0);
@@ -436,8 +411,6 @@ public class Main {
                   --request-timeout <ms>                     Overall request timeout in ms (default: 30000)
                   --idle-timeout <ms>                        Idle timeout between data messages in ms (default: 10000)
                   --shared-dir <path>                        Shared file directory (default: ~/mosaic-shared)
-                  --debug-port <port>                        Debug HTTP server port (disabled if not set)
-                  --http-port <port>                         Mosaic web UI + API port (disabled if not set)
 
                   --help                                     Show this help
 

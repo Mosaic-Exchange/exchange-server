@@ -2,39 +2,46 @@
 
 A distributed service framework built on gossip-based cluster membership and Netty transport.
 
-## Quick Start
+Rumor handles cluster formation, peer discovery, request routing, streaming, backpressure,
+and serialization — you just write service handlers.
 
-```bash
-# Start a master node (seed + evictor) on port 7001
-mvn exec:java -Dexec.args="--port 7001 --type master"
+## Getting Started
 
-# Start a basic node connecting to the master
-mvn exec:java -Dexec.args="--port 7002 --type basic --seed 127.0.0.1:7001"
+Add Rumor as a dependency (or build from source with `mvn install`), then wire up a node:
 
-# Start a basic node with the web UI
-mvn exec:java -Dexec.args="--port 7002 --type basic --seed 127.0.0.1:7001 --http-port 8080"
+```java
+RumorConfig config = new RumorConfig();
+config.port(7001).nodeType(NodeType.MASTER);
+
+Rumor rumor = new Rumor(config);
+rumor.register(new MyService());
+rumor.start();
 ```
 
-### CLI Options
+On a second machine (or terminal):
 
-| Flag | Description | Default |
-|---|---|---|
-| `--port`, `-p` | Listen port | `7000` |
-| `--host`, `-h` | Listen address | `127.0.0.1` |
-| `--type`, `-t` | Node type: `seed`, `basic`, `eviction`, `master` | `basic` |
-| `--seed`, `-s` | Seed node `host:port` (repeatable) | — |
-| `--request-timeout` | Overall request timeout (ms) | `30000` |
-| `--idle-timeout` | Idle timeout between data chunks (ms) | `10000` |
-| `--shared-dir` | Shared file directory | `~/mosaic-shared` |
-| `--http-port` | Web UI + API port (disabled if omitted) | — |
-| `--debug-port` | Debug HTTP server port (disabled if omitted) | — |
+```java
+RumorConfig config = new RumorConfig();
+config.port(7002).addSeed("127.0.0.1", 7001);
+
+Rumor rumor = new Rumor(config);
+rumor.register(new MyService());
+rumor.start();
+```
+
+The two nodes discover each other via gossip and can now exchange service requests.
+
+See the [`example/`](example/) directory for a complete runnable application (LLM inference +
+file sharing) with its own [README](example/README.md).
 
 ### Node Types
 
-- **seed** — bootstrap node; other nodes connect here first
-- **basic** — standard participant
-- **eviction** — monitors heartbeats, marks unresponsive nodes DOWN
-- **master** — seed + eviction combined
+| Type | Description |
+|---|---|
+| `BASIC` | Standard participant node |
+| `SEED` | Bootstrap node — other nodes connect here first |
+| `EVICTION` | Monitors heartbeats and marks unresponsive nodes DOWN |
+| `MASTER` | Combined seed + eviction |
 
 ## Programmatic Setup
 

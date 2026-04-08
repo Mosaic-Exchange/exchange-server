@@ -1,5 +1,3 @@
-package org.rumor.app;
-
 import java.io.Serializable;
 
 /**
