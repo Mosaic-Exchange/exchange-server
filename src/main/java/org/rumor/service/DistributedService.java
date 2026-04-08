@@ -413,6 +413,10 @@ public abstract class DistributedService<Req, Resp> {
         return remoteExecutor != null;
     }
 
+    public final boolean ownsExecutors() {
+        return ownsExecutors;
+    }
+
     public ThreadPoolExecutor remoteExecutor() { return remoteExecutor; }
     public ThreadPoolExecutor localExecutor() { return localExecutor; }
 

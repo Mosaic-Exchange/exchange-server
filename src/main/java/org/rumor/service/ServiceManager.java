@@ -577,7 +577,10 @@ public class ServiceManager implements ClusterView {
         RemoteStreamingServiceResponse response = new RemoteStreamingServiceResponse(
                 requestId, pending.ctx.channel(), pending.handle, pending.service.responseCodec);
 
-        Future<?> future = streamExecutor.submit(() -> {
+        // Register BEFORE executing: if submit() is used instead, a fast-finishing task
+        // could run its finally-block (remove) before activeStreams.put(), leaving a
+        // zombie entry that permanently inflates activeStreamsServer.
+        FutureTask<Void> task = new FutureTask<>(() -> {
             try {
                 pending.service.executeServe(serviceRequest, response);
                 response.close();
@@ -591,8 +594,10 @@ public class ServiceManager implements ClusterView {
                 activeStreams.remove(requestId);
                 serverSideHandles.remove(requestId);
             }
+            return null;
         });
-        activeStreams.put(requestId, future);
+        activeStreams.put(requestId, task);
+        streamExecutor.execute(task);
     }
 
     //  Node picking
@@ -693,7 +698,7 @@ public class ServiceManager implements ClusterView {
     //  Debug snapshot
 
     public record ExecutorSnapshot(int activeThreads, int poolSize, int maxPoolSize,
-                                   int queueSize, long completedTasks) {}
+                                   int queueSize, int queueCapacity, long completedTasks) {}
 
     public record ExecutorPairSnapshot(ExecutorSnapshot remote, ExecutorSnapshot local) {}
 
@@ -704,8 +709,12 @@ public class ServiceManager implements ClusterView {
                                 Map<String, ExecutorPairSnapshot> executorStats) {}
 
     private static ExecutorSnapshot snap(java.util.concurrent.ThreadPoolExecutor ex) {
+        BlockingQueue<Runnable> q = ex.getQueue();
+        // size() + remainingCapacity() == total capacity for ArrayBlockingQueue;
+        // both return 0 for SynchronousQueue, correctly representing fail-fast (no buffering).
+        int capacity = q.size() + q.remainingCapacity();
         return new ExecutorSnapshot(ex.getActiveCount(), ex.getPoolSize(),
-                ex.getMaximumPoolSize(), ex.getQueue().size(), ex.getCompletedTaskCount());
+                ex.getMaximumPoolSize(), q.size(), capacity, ex.getCompletedTaskCount());
     }
 
     public DebugSnapshot debugSnapshot() {
@@ -717,9 +726,15 @@ public class ServiceManager implements ClusterView {
         }
 
         Map<String, ExecutorPairSnapshot> executorStats = new HashMap<>();
+        // Show the shared global pool once under "(global)" rather than once per service.
+        if (globalRemoteExecutor != null) {
+            executorStats.put("(global)", new ExecutorPairSnapshot(
+                    snap(globalRemoteExecutor), snap(globalLocalExecutor)));
+        }
+        // Only include services that own their own dedicated executor pools.
         for (var entry : services.entrySet()) {
             DistributedService svc = entry.getValue();
-            if (svc.hasExecutors()) {
+            if (svc.hasExecutors() && svc.ownsExecutors()) {
                 executorStats.put(entry.getKey(),
                         new ExecutorPairSnapshot(snap(svc.remoteExecutor()), snap(svc.localExecutor())));
             }
