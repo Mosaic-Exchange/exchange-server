@@ -56,11 +56,11 @@ rumor.start();
 
 ## Writing a Service
 
-Extend `RService` and implement `serve()`. For the common byte[] case, use raw types — no
+Extend `DistributedService` and implement `serve()`. For the common byte[] case, use raw types — no
 generic parameters needed on the class:
 
 ```java
-public class EchoService extends RService {
+public class EchoService extends DistributedService {
 
     @Override
     public void serve(ServiceRequest request, ServiceResponse response) {
@@ -73,10 +73,10 @@ public class EchoService extends RService {
 
 ### Custom Request/Response Types
 
-For custom types, parameterize `RService` and the `serve()` method:
+For custom types, parameterize `DistributedService` and the `serve()` method:
 
 ```java
-public class GreetService extends RService<GreetRequest, GreetResponse> {
+public class GreetService extends DistributedService<GreetRequest, GreetResponse> {
 
     @Override
     public void serve(ServiceRequest<GreetRequest> request,
@@ -104,7 +104,7 @@ If you want control over serialization, implement `ServiceCodec<T>` and referenc
 `@Codec` on the `serve()` parameters:
 
 ```java
-public class GreetService extends RService<GreetRequest, GreetResponse> {
+public class GreetService extends DistributedService<GreetRequest, GreetResponse> {
 
     static class ReqCodec implements ServiceCodec<GreetRequest> {
         @Override public byte[] encode(GreetRequest value) { /* your logic */ }
@@ -193,7 +193,7 @@ dedicated thread — blocking is safe:
 c
 ```java
 @Streamable
-public class GenerateService extends RService<String, String> {
+public class GenerateService extends DistributedService<String, String> {
 
     @Override
     public void serve(ServiceRequest<String> request, ServiceResponse<String> response) {
@@ -227,7 +227,7 @@ For byte[] streaming services (like file downloads), cast `d.data()` to `byte[]`
 
 ### Calling a Service
 
-`RService` gives you two calling methods: `request` for local execution and `dispatch` for
+`DistributedService` gives you two calling methods: `request` for local execution and `dispatch` for
 remote.
 
 **Remote** — dispatches a request to a random healthy peer offering this service. Returns
@@ -305,7 +305,7 @@ the result. Keys are automatically qualified as `ServiceClassName.KEY`:
 
 ```java
 @MaintainState
-public class GpuService extends RService {
+public class GpuService extends DistributedService {
 
     @StateKey("GPU_INFO")
     public String gpuInfo() { return "A100:80GB"; }
@@ -330,14 +330,14 @@ others:
 
 ```java
 // Per-service config (takes precedence over global)
-rumor.register(inferenceService, new RService.Config()
+rumor.register(inferenceService, new DistributedService.Config()
         .remoteThreads(2)          // threads for inbound (remote) requests
         .remoteQueueCapacity(2)    // queue depth; 0 = fail-fast, no queuing
         .localThreads(2)           // threads for local requests
         .localQueueCapacity(2));
 
 // Global config — shared by all services without a per-service config
-rumor.globalServiceConfig(new RService.Config()
+rumor.globalServiceConfig(new DistributedService.Config()
         .remoteThreads(4)
         .localThreads(4));
 ```
@@ -428,7 +428,7 @@ stopped on `rumor.stop()`.
 
 ## Best Practices
 
-1. **Don't block network I/O threads.** Configure `RService.Config` executor pools for any
+1. **Don't block network I/O threads.** Configure `DistributedService.Config` executor pools for any
    service that touches disk, network, or runs for more than a few milliseconds.
 2. **Close your responses.** Always call `response.close()` in the success path. On errors, call
    `response.fail()` — do not call both.
