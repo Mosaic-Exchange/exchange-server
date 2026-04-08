@@ -4,6 +4,7 @@ import org.rumor.gossip.NodeId;
 import org.rumor.service.MaintainState;
 import org.rumor.service.OnStateChange;
 import org.rumor.service.RService;
+import org.rumor.service.ServiceHandle;
 import org.rumor.service.ServiceResponse;
 import org.rumor.service.StateKey;
 import org.rumor.service.Streamable;
@@ -44,7 +45,7 @@ public class FileDownloadService extends RService {
 
     // --- State publishing ---
 
-    @StateKey("SHARED_FILES")
+    @StateKey("AVAILABLE_FILES")
     public String computeState() {
         if (!Files.isDirectory(sharedRoot)) return "";
 
@@ -80,10 +81,11 @@ public class FileDownloadService extends RService {
      *
      * @param fileName      the file name to download
      * @param onStateChange callback for request lifecycle events
+     * @return a handle that can be used to cancel the download
      */
-    public void downloadFrom(String fileName, OnStateChange onStateChange) {
+    public ServiceHandle downloadFrom(String fileName, OnStateChange onStateChange) {
         byte[] request = fileName.getBytes(StandardCharsets.UTF_8);
-        dispatch(request, onStateChange, appState -> {
+        return dispatch(request, onStateChange, appState -> {
             String files = appState.get(qualifiedKey(STATE_KEY));
             if (files == null || files.isEmpty()) return false;
             for (String entry : files.split(",")) {

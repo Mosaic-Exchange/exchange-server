@@ -57,9 +57,10 @@ public abstract class RService {
      *                      {@link RequestEvent.StreamData} – response data arrived,
      *                      {@link RequestEvent.Succeeded} – completed successfully,
      *                      {@link RequestEvent.Failed} – failed (includes reason)
+     * @return a handle that can be used to cancel the request
      */
-    public void dispatch(byte[] request, OnStateChange onStateChange) {
-        dispatch(request, onStateChange, null);
+    public ServiceHandle dispatch(byte[] request, OnStateChange onStateChange) {
+        return dispatch(request, onStateChange, null);
     }
 
     /**
@@ -70,13 +71,16 @@ public abstract class RService {
      * @param onStateChange called when request events occur
      * @param peerFilter    optional predicate over the peer's app state;
      *                      {@code null} means no extra filtering
+     * @return a handle that can be used to cancel the request
      */
-    public void dispatch(byte[] request, OnStateChange onStateChange,
+    public ServiceHandle dispatch(byte[] request, OnStateChange onStateChange,
                          Predicate<Map<String, String>> peerFilter) {
         if (manager == null) {
             throw new IllegalStateException("Service not registered. Call rumor.register() first.");
         }
-        manager.sendRequest(serviceName(), request, onStateChange, peerFilter);
+        ServiceHandle handle = new ServiceHandle();
+        manager.sendRequest(serviceName(), request, onStateChange, peerFilter, handle);
+        return handle;
     }
 
     /**
@@ -89,17 +93,20 @@ public abstract class RService {
      *
      * @param request       request bytes passed directly to {@link #serve}
      * @param onStateChange called when request events occur (same contract as dispatch)
+     * @return a handle that can be used to cancel the request
      */
-    public void request(byte[] request, OnStateChange onStateChange) {
+    public ServiceHandle request(byte[] request, OnStateChange onStateChange) {
+        ServiceHandle handle = new ServiceHandle();
         onStateChange.accept(new RequestEvent.Processing());
         boolean singleWrite = !this.getClass().isAnnotationPresent(Streamable.class);
-        LocalServiceResponse response = new LocalServiceResponse(onStateChange, singleWrite);
+        LocalServiceResponse response = new LocalServiceResponse(onStateChange, singleWrite, handle);
         try {
             serve(request, response);
             response.close();
         } catch (Exception e) {
             response.fail(e.getMessage().getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
+        return handle;
     }
 
     /**

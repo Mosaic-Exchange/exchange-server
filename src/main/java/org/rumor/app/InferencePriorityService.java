@@ -32,8 +32,8 @@ public class InferencePriorityService extends RPriorityService {
     public InferencePriorityService() {
         this("http://localhost:11434", "llama3.2",
                 new Config()
-                        .remoteThreads(1)
-                        .remoteQueueCapacity(0)
+                        .remoteThreads(2)
+                        .remoteQueueCapacity(2)
                         .localThreads(1)
                         .localQueueCapacity(0));
     }

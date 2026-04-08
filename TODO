@@ -98,3 +98,18 @@ MyService(RService){
 In docs mention that when we call resposne.fail(bytes)
 we can have a protocol on top of protocl that tells you
 why this error was caused
+
+
+We need two things:-
+1. if we get messages associated with a service we previouslt canceled then we
+sent SERVICE_CANCEL as a reponse. This can happen in the following situation:- suppose 
+we made a request it got queued on the remote 
+peer mean while it got lagged adn took a lot of time while we tried sending it a SERVICE_CANCEL request that failed. The remote
+peer is not healthy and started streaming data packets SERVICE_INIT_STREAM in response to this we must send STREAM_CANCEL and not SERVICE_STREAM_START. This defense shoudl be the case for all other message handling. 
+
+Their is currently now way from the ui to cancel a request or dispatch. We want
+this as it may be desirable. Possible solution is to return a ServiceHandle via
+which yuo could cancel this service.
+
+I have to think about dynamic changes in confiugrations of
+serices

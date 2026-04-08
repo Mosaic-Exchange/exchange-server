@@ -17,7 +17,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -61,8 +60,8 @@ public class ServiceManager implements ClusterView {
     private final Map<Integer, PendingRequest> pendingRequests = new ConcurrentHashMap<>();
 
     // --- Server-side: streaming ---
-    private final AtomicBoolean streamingActive = new AtomicBoolean(false);
     private final Map<Integer, PendingStream> pendingStreams = new ConcurrentHashMap<>();
+    private final Map<Integer, Future<?>> activeStreams = new ConcurrentHashMap<>();
     private final ExecutorService streamExecutor;
 
     // State publishers scheduled for periodic updates
@@ -81,7 +80,7 @@ public class ServiceManager implements ClusterView {
             t.setDaemon(true);
             return t;
         });
-        this.streamExecutor = Executors.newSingleThreadExecutor(r -> {
+        this.streamExecutor = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "stream-worker");
             t.setDaemon(true);
             return t;
@@ -163,7 +162,7 @@ public class ServiceManager implements ClusterView {
      * the server decides the protocol after receiving SERVICE_REQUEST.
      */
     public void sendRequest(String serviceName, byte[] request, OnStateChange onStateChange,
-                            Predicate<Map<String, String>> peerFilter) {
+                            Predicate<Map<String, String>> peerFilter, ServiceHandle handle) {
         NodeId target = pickNode(serviceName, peerFilter);
         if (target == null) {
             onStateChange.accept(new RequestEvent.Failed("No live node found offering service '" + serviceName + "'"));
@@ -171,11 +170,11 @@ public class ServiceManager implements ClusterView {
             return;
         }
 
-        sendRequestTo(target, serviceName, request, onStateChange);
+        sendRequestTo(target, serviceName, request, onStateChange, handle);
     }
 
     private void sendRequestTo(NodeId target, String serviceName, byte[] request,
-                                OnStateChange onStateChange) {
+                                OnStateChange onStateChange, ServiceHandle handle) {
         try {
             Channel channel = connectionManager.getChannel(target);
             if (channel == null) {
@@ -183,7 +182,7 @@ public class ServiceManager implements ClusterView {
             }
 
             int requestId = requestIdGenerator.getAndIncrement();
-            PendingRequest pending = new PendingRequest(requestId, onStateChange);
+            PendingRequest pending = new PendingRequest(requestId, onStateChange, channel);
             pendingRequests.put(requestId, pending);
 
             pending.overallTimeout = timeoutScheduler.schedule(
@@ -192,6 +191,10 @@ public class ServiceManager implements ClusterView {
 
             pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
                     () -> timeoutRequest(requestId, "Idle timeout (no data received within " + requestIdleTimeoutMs + "ms)"));
+
+            if (handle != null) {
+                handle.onCancel(() -> cancelByHandle(requestId));
+            }
 
             // Build SERVICE_REQUEST payload:
             //   [requestId: 4B][serviceNameLen: 2B][serviceName: NB][requestPayload: NB]
@@ -219,7 +222,44 @@ public class ServiceManager implements ClusterView {
             pending.cancelTimeouts();
             pending.onStateChange.accept(new RequestEvent.Failed(reason));
             log.warn("Request {} timed out: {}", requestId, reason);
+
+            // Notify the server so it can stop work
+            if (pending.channel.isActive()) {
+                byte[] cancelPayload = new byte[4];
+                ByteBuffer.wrap(cancelPayload).putInt(requestId);
+                pending.channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_CANCEL, cancelPayload));
+            }
         }
+    }
+
+    /**
+     * Cancels a pending request initiated by the caller via {@link ServiceHandle#cancel()}.
+     * Removes the pending request, cancels timeouts, notifies the caller with a
+     * {@link RequestEvent.Failed} event, and sends SERVICE_CANCEL to the server.
+     */
+    private void cancelByHandle(int requestId) {
+        PendingRequest pending = pendingRequests.remove(requestId);
+        if (pending != null) {
+            pending.cancelTimeouts();
+            pending.onStateChange.accept(new RequestEvent.Failed("Cancelled"));
+            log.info("Request {} cancelled by caller", requestId);
+
+            if (pending.channel.isActive()) {
+                byte[] cancelPayload = new byte[4];
+                ByteBuffer.wrap(cancelPayload).putInt(requestId);
+                pending.channel.writeAndFlush(new RumorFrame(MessageType.SERVICE_CANCEL, cancelPayload));
+            }
+        }
+    }
+
+    /**
+     * Sends SERVICE_CANCEL for a request we no longer track — tells the server
+     * to stop any work associated with this request id.
+     */
+    private void sendCancel(ChannelHandlerContext ctx, int requestId) {
+        byte[] cancelPayload = new byte[4];
+        ByteBuffer.wrap(cancelPayload).putInt(requestId);
+        ctx.writeAndFlush(new RumorFrame(MessageType.SERVICE_CANCEL, cancelPayload));
     }
 
     // ====================================================================
@@ -271,8 +311,12 @@ public class ServiceManager implements ClusterView {
         PendingRequest pending = pendingRequests.get(requestId);
         if (pending != null) {
             pending.streaming = true;
-            pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
-                    () -> timeoutRequest(requestId, "Idle timeout (no stream data received within " + requestIdleTimeoutMs + "ms)"));
+            // Cancel idle timeout during handshake — rely only on the overall
+            // request timeout until the first STREAM_DATA actually arrives.
+            if (pending.idleTimeout != null) {
+                pending.idleTimeout.cancel(false);
+                pending.idleTimeout = null;
+            }
 
             // Acknowledge: ready to receive stream data
             byte[] startPayload = new byte[4];
@@ -280,7 +324,8 @@ public class ServiceManager implements ClusterView {
             ctx.writeAndFlush(new RumorFrame(MessageType.SERVICE_STREAM_START, startPayload));
             log.debug("Streaming initiated for request {}, sent STREAM_START", requestId);
         } else {
-            log.warn("Received INIT_STREAM for unknown request {}", requestId);
+            log.warn("Received INIT_STREAM for unknown request {}, sending cancel", requestId);
+            sendCancel(ctx, requestId);
         }
     }
 
@@ -297,7 +342,8 @@ public class ServiceManager implements ClusterView {
                     () -> timeoutRequest(requestId, "Idle timeout (no stream data received within " + requestIdleTimeoutMs + "ms)"));
             pending.onStateChange.accept(new RequestEvent.StreamData(data));
         } else {
-            log.warn("Received stream data for unknown request {}", requestId);
+            log.warn("Received stream data for unknown request {}, sending cancel", requestId);
+            sendCancel(ctx, requestId);
         }
     }
 
@@ -330,7 +376,40 @@ public class ServiceManager implements ClusterView {
             log.warn("Stream {} failed remotely: {}", requestId, reason);
         } else {
             log.warn("Received stream error for unknown request {}", requestId);
+            sendCancel(ctx, requestId);
         }
+    }
+
+    // ====================================================================
+    //  Server-side: cancellation
+    // ====================================================================
+
+    /**
+     * Handles SERVICE_CANCEL — client no longer needs the response.
+     * Cancels any pending handshake or active stream for the given request.
+     */
+    public void handleServiceCancel(ChannelHandlerContext ctx, byte[] payload) {
+        int requestId = ByteBuffer.wrap(payload).getInt();
+
+        // Cancel pending handshake if still waiting
+        PendingStream pendingStream = pendingStreams.remove(requestId);
+        if (pendingStream != null) {
+            if (pendingStream.handshakeTimeout != null) {
+                pendingStream.handshakeTimeout.cancel(false);
+            }
+            log.info("Cancelled pending stream handshake for request {}", requestId);
+            return;
+        }
+
+        // Cancel active stream if running
+        Future<?> future = activeStreams.remove(requestId);
+        if (future != null) {
+            future.cancel(true);
+            log.info("Cancelled active stream for request {}", requestId);
+            return;
+        }
+
+        log.debug("Received cancel for unknown request {} (may have already completed)", requestId);
     }
 
     // ====================================================================
@@ -375,19 +454,12 @@ public class ServiceManager implements ClusterView {
         }
 
         // Streaming: handshake then serve on dedicated thread
-        if (!streamingActive.compareAndSet(false, true)) {
-            log.warn("Rejecting streaming request {} — a stream is already active", requestId);
-            sendError(ctx, requestId, "A streaming session is already active on this node");
-            return;
-        }
-
         PendingStream pending = new PendingStream(requestId, ctx, service, requestData);
         pendingStreams.put(requestId, pending);
 
         pending.handshakeTimeout = timeoutScheduler.schedule(() -> {
             PendingStream removed = pendingStreams.remove(requestId);
             if (removed != null) {
-                streamingActive.set(false);
                 log.warn("Stream handshake timed out for request {}", requestId);
                 sendError(ctx, requestId, "Stream handshake timed out");
             }
@@ -418,9 +490,11 @@ public class ServiceManager implements ClusterView {
 
         log.debug("Client ready for stream {}, starting serve() on stream-worker", requestId);
 
-        streamExecutor.submit(() -> {
+        Future<?> future = streamExecutor.submit(() -> {
             RemoteStreamingServiceResponse response = new RemoteStreamingServiceResponse(
-                    requestId, pending.ctx.channel(), () -> streamingActive.set(false));
+                    requestId, pending.ctx.channel(), () -> {
+                        activeStreams.remove(requestId);
+                    });
             try {
                 pending.service.serve(pending.requestData, response);
                 response.close();
@@ -430,6 +504,7 @@ public class ServiceManager implements ClusterView {
                 response.fail(msg.getBytes(StandardCharsets.UTF_8));
             }
         });
+        activeStreams.put(requestId, future);
     }
 
     // ====================================================================
@@ -525,24 +600,72 @@ public class ServiceManager implements ClusterView {
             if (pending.handshakeTimeout != null) pending.handshakeTimeout.cancel(false);
         }
         pendingStreams.clear();
-        streamingActive.set(false);
     }
 
     // ====================================================================
     //  Inner classes
     // ====================================================================
 
+    // ====================================================================
+    //  Debug snapshot
+    // ====================================================================
+
+    public record ExecutorSnapshot(int activeThreads, int poolSize, int maxPoolSize,
+                                   int queueSize, long completedTasks) {}
+
+    public record ExecutorPairSnapshot(ExecutorSnapshot remote, ExecutorSnapshot local) {}
+
+    public record PendingRequestDetail(int requestId, boolean streaming, long elapsedMs) {}
+
+    public record DebugSnapshot(int pendingOutbound, int activeStreamsServer, int pendingHandshakes,
+                                List<PendingRequestDetail> pendingDetails,
+                                Map<String, ExecutorPairSnapshot> executorStats) {}
+
+    private static ExecutorSnapshot snap(java.util.concurrent.ThreadPoolExecutor ex) {
+        return new ExecutorSnapshot(ex.getActiveCount(), ex.getPoolSize(),
+                ex.getMaximumPoolSize(), ex.getQueue().size(), ex.getCompletedTaskCount());
+    }
+
+    public DebugSnapshot debugSnapshot() {
+        List<PendingRequestDetail> details = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (var pr : pendingRequests.values()) {
+            details.add(new PendingRequestDetail(pr.requestId, pr.streaming,
+                    now - pr.createdAt));
+        }
+
+        Map<String, ExecutorPairSnapshot> executorStats = new HashMap<>();
+        for (var entry : services.entrySet()) {
+            if (entry.getValue() instanceof RPriorityService ps) {
+                executorStats.put(entry.getKey(),
+                        new ExecutorPairSnapshot(snap(ps.remoteExecutor()), snap(ps.localExecutor())));
+            }
+        }
+
+        return new DebugSnapshot(
+                pendingRequests.size(),
+                activeStreams.size(),
+                pendingStreams.size(),
+                details,
+                executorStats
+        );
+    }
+
     /** Tracks a pending outbound request (client side). */
     private static class PendingRequest {
         final int requestId;
         final OnStateChange onStateChange;
+        final Channel channel;
+        final long createdAt;
         volatile ScheduledFuture<?> overallTimeout;
         volatile ScheduledFuture<?> idleTimeout;
         volatile boolean streaming;
 
-        PendingRequest(int requestId, OnStateChange onStateChange) {
+        PendingRequest(int requestId, OnStateChange onStateChange, Channel channel) {
             this.requestId = requestId;
             this.onStateChange = onStateChange;
+            this.channel = channel;
+            this.createdAt = System.currentTimeMillis();
         }
 
         void resetIdleTimeout(ScheduledExecutorService scheduler, long idleMs, Runnable onTimeout) {

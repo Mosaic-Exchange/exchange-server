@@ -10,23 +10,32 @@ package org.rumor.service;
  *
  * <p>When {@code singleWrite} is {@code false} ({@link Streamable} services),
  * each {@link #write(byte[])} emits a {@link RequestEvent.StreamData} event.
+ *
+ * <p>If a {@link ServiceHandle} is provided and has been cancelled, the next
+ * call to {@link #write(byte[])} throws {@link java.util.concurrent.CancellationException},
+ * which the framework catches to emit a {@link RequestEvent.Failed} event.
  */
 class LocalServiceResponse implements ServiceResponse {
 
     private final OnStateChange onStateChange;
     private final boolean singleWrite;
+    private final ServiceHandle handle;
     private boolean closed;
     private boolean written;
     private byte[] bufferedData;
 
-    LocalServiceResponse(OnStateChange onStateChange, boolean singleWrite) {
+    LocalServiceResponse(OnStateChange onStateChange, boolean singleWrite, ServiceHandle handle) {
         this.onStateChange = onStateChange;
         this.singleWrite = singleWrite;
+        this.handle = handle;
     }
 
     @Override
     public void write(byte[] data) {
         if (closed) throw new IllegalStateException("Response already closed");
+        if (handle != null && handle.isCancelled()) {
+            throw new java.util.concurrent.CancellationException("Service request cancelled");
+        }
         if (singleWrite && written) {
             throw new IllegalStateException(
                     "write() can only be called once for non-streaming services. " +

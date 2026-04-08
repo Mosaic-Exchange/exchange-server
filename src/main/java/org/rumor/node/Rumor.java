@@ -2,6 +2,7 @@ package org.rumor.node;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import org.rumor.debug.DebugHttpServer;
 import org.rumor.gossip.EndpointState;
 import org.rumor.gossip.EvictionService;
 import org.rumor.gossip.GossipService;
@@ -12,6 +13,7 @@ import org.rumor.transport.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,6 +35,7 @@ public class Rumor {
     private final GossipService gossipService;
     private final ServiceManager serviceManager;
     private final EvictionService evictionService;
+    private DebugHttpServer debugHttpServer;
 
     public Rumor(RumorConfig config) {
         this.config = config;
@@ -71,10 +74,24 @@ public class Rumor {
         if (evictionService != null) {
             evictionService.start();
         }
+
+        if (config.debugPort() > 0) {
+            try {
+                debugHttpServer = new DebugHttpServer(config.debugPort(), serviceManager,
+                        localId, this::getClusterState, System.currentTimeMillis());
+                debugHttpServer.start();
+            } catch (IOException e) {
+                log.warn("Failed to start debug HTTP server on port {}: {}", config.debugPort(), e.getMessage());
+            }
+        }
+
         log.info("Rumor started: {} (type={})", localId, config.nodeType());
     }
 
     public void stop() {
+        if (debugHttpServer != null) {
+            debugHttpServer.stop();
+        }
         if (evictionService != null) {
             evictionService.stop();
         }
@@ -132,6 +149,9 @@ public class Rumor {
             case SERVICE_STREAM_DATA  -> serviceManager.handleServiceStreamData(ctx, frame.payload());
             case SERVICE_STREAM_END   -> serviceManager.handleServiceStreamEnd(ctx, frame.payload());
             case SERVICE_STREAM_ERROR -> serviceManager.handleServiceStreamError(ctx, frame.payload());
+
+            // Cancellation
+            case SERVICE_CANCEL -> serviceManager.handleServiceCancel(ctx, frame.payload());
         }
     }
 

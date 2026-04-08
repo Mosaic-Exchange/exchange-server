@@ -32,7 +32,7 @@ public class TransportServer {
         this.frameHandler = frameHandler;
         this.onConnect = onConnect;
         this.bossGroup = new NioEventLoopGroup(1);
-        this.workerGroup = new NioEventLoopGroup();
+        this.workerGroup = new NioEventLoopGroup(3);
     }
 
     public void start() throws InterruptedException {

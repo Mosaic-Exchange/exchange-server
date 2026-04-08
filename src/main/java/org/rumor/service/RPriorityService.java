@@ -164,12 +164,13 @@ public abstract class RPriorityService extends RService {
      * immediately with a {@link RequestEvent.Failed} event.
      */
     @Override
-    public final void request(byte[] request, OnStateChange onStateChange) {
+    public final ServiceHandle request(byte[] request, OnStateChange onStateChange) {
+        ServiceHandle handle = new ServiceHandle();
         try {
             localExecutor.execute(() -> {
                 onStateChange.accept(new RequestEvent.Processing());
                 boolean singleWrite = !this.getClass().isAnnotationPresent(Streamable.class);
-                LocalServiceResponse response = new LocalServiceResponse(onStateChange, singleWrite);
+                LocalServiceResponse response = new LocalServiceResponse(onStateChange, singleWrite, handle);
                 try {
                     doServe(request, response);
                     response.close();
@@ -181,7 +182,14 @@ public abstract class RPriorityService extends RService {
         } catch (RejectedExecutionException e) {
             onStateChange.accept(new RequestEvent.Failed("Service at capacity (local)"));
         }
+        return handle;
     }
+
+    /** Returns the remote executor for metrics/debug access. */
+    public ThreadPoolExecutor remoteExecutor() { return remoteExecutor; }
+
+    /** Returns the local executor for metrics/debug access. */
+    public ThreadPoolExecutor localExecutor() { return localExecutor; }
 
     /** Shuts down both executor pools. */
     public void shutdownExecutors() {
