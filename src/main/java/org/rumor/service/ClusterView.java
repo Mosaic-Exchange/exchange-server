@@ -9,7 +9,7 @@ import java.util.function.Predicate;
 /**
  * Read-only view of the cluster's application state.
  *
- * <p>Injected into {@link DistributedService} instances by the framework so that
+ * Injected into {@link DistributedService} instances by the framework so that
  * services can query peer state without touching gossip internals.
  */
 public interface ClusterView {

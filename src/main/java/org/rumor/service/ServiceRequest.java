@@ -4,15 +4,15 @@ package org.rumor.service;
  * Encapsulates an inbound service request: the payload and the
  * {@link ServiceHandle} associated with this invocation.
  *
- * <p>For remote requests, the payload arrives as raw bytes and is decoded
+ * For remote requests, the payload arrives as raw bytes and is decoded
  * lazily on the first call to {@link #data()} using the service's codec.
  * For local requests ({@link DistributedService#request}), the typed object is passed
  * directly — no serialization occurs.
  *
- * <p>Implementations of {@link DistributedService#serve(ServiceRequest, ServiceResponse)}
+ * Implementations of {@link DistributedService#serve(ServiceRequest, ServiceResponse)}
  * receive this object. Use {@link #isCancelled()} in long-running loops as a
  * cooperative early-exit point — the framework will also throw
- * {@link java.util.concurrent.CancellationException} from the next
+ * {@link CancellationException} from the next
  * {@link ServiceResponse#write} call when the request is cancelled.
  *
  * @param <T> the request data type ({@code byte[]} by default)
@@ -36,7 +36,7 @@ public class ServiceRequest<T> {
         this.handle = handle;
     }
 
-    /** Local constructor: holds the typed object directly — zero serialization. */
+    /** Local constructor: holds the typed object directly */
     ServiceRequest(T typedData, ServiceHandle handle) {
         this.rawData = null;
         this.typedData = typedData;
@@ -64,9 +64,8 @@ public class ServiceRequest<T> {
      * received over the network. For local byte[] requests, returns the
      * byte array directly. Returns {@code null} for local typed requests.
      *
-     * <p>This is a convenience method for byte[] services — use it to avoid
-     * casting {@link #data()} in {@code serve()} implementations that use
-     * raw (unparameterized) {@code ServiceRequest}.
+     * This is a convenience method for byte[] services, use it to avoid
+     * casting {@link #data()}.
      */
     public byte[] raw() {
         if (rawData != null) return rawData;

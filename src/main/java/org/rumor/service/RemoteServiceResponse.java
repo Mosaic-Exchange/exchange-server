@@ -12,12 +12,12 @@ import java.util.concurrent.CancellationException;
 /**
  * Single-write response for {@link DistributedService} requests over the network.
  *
- * <p>{@link #write(Object) write(T)} encodes the typed response via the service's codec,
+ * {@link #write(Object) write(T)} encodes the typed response via the service's codec,
  * then buffers the bytes. {@link #write(byte[])} stores raw bytes directly without
  * encoding. {@link #close()} sends a single {@code SERVICE_RESPONSE} frame with the
  * buffered payload. {@link #fail(byte[])} sends a {@code SERVICE_ERROR} frame instead.
  *
- * <p>Calling {@code write()} more than once throws {@link IllegalStateException}.
+ * Calling {@link #write(Object)} more than once throws {@link IllegalStateException}.
  *
  * @param <T> the response data type
  */

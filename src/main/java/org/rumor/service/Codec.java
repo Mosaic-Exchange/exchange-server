@@ -7,24 +7,25 @@ import java.lang.annotation.Target;
 
 /**
  * Specifies a custom {@link ServiceCodec} for a {@link ServiceRequest} or
- * {@link ServiceResponse} parameter on a {@link DistributedService#serve} method.
+ * {@link ServiceResponse} parameter on a {@link DistributedService#serve}
+ * method.
  *
- * <p>Place this annotation on the parameters of your {@code serve()} override
+ * Place this annotation on the parameters of your {@code serve()} override
  * to control how request/response data is serialized for remote calls:
  *
- * <pre>{@code
- * @Override
+ * <pre>
+ * {@code
+ * &#64;Override
  * public void serve(
- *     @Codec(MyReqCodec.class)  ServiceRequest<MyReq>  request,
+ *     &#64;Codec(MyReqCodec.class)  ServiceRequest<MyReq>  request,
  *     @Codec(MyRespCodec.class) ServiceResponse<MyResp> response) {
  *     ...
  * }
- * }</pre>
+ * }
+ * </pre>
  *
- * <p>When absent, the framework uses a default codec: identity passthrough
+ * When absent, the framework uses a default codec: identity passthrough
  * for {@code byte[]} types, or Java serialization for other types.
- *
- * <p>The referenced codec class must have a public no-arg constructor.
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)

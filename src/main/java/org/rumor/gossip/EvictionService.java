@@ -23,7 +23,7 @@ public class EvictionService {
     private final long checkIntervalMs;
     private final long evictionThresholdMs;
 
-    // Tracks the last observed heartbeat version for each node
+    // Tracks the last observed generation and heartbeat version for each node
     private final Map<NodeId, HeartbeatSnapshot> lastSeen = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -32,7 +32,7 @@ public class EvictionService {
         return t;
     });
 
-    private record HeartbeatSnapshot(long heartbeatVersion, long observedAtMs) {}
+    private record HeartbeatSnapshot(long generation, long heartbeatVersion, long observedAtMs) {}
 
     public EvictionService(NodeId localNode, GossipService gossipService,
                            long checkIntervalMs, long evictionThresholdMs) {
@@ -65,21 +65,20 @@ public class EvictionService {
                 // Don't evict ourselves
                 if (nodeId.equals(localNode)) continue;
 
-                // Only track the real heartbeat — this is incremented solely
-                // by the node itself during gossip rounds. setRemoteState does
-                // NOT touch heartbeatVersion, so it can't create false advances.
+                long currentGen = state.generation();
                 long currentHb = state.heartbeatVersion();
                 HeartbeatSnapshot prev = lastSeen.get(nodeId);
 
-                if (prev == null || prev.heartbeatVersion < currentHb) {
-                    // Heartbeat advanced — node is genuinely alive
-                    lastSeen.put(nodeId, new HeartbeatSnapshot(currentHb, now));
+                if (prev == null || prev.generation < currentGen || 
+                   (prev.generation == currentGen && prev.heartbeatVersion < currentHb)) {
+                    // Heartbeat or generation advanced — node is genuinely alive
+                    lastSeen.put(nodeId, new HeartbeatSnapshot(currentGen, currentHb, now));
 
                     // If node was DOWN, mark it back ALIVE
                     VersionedValue status = state.getAppState("STATUS");
                     if (status != null && "DOWN".equals(status.value())) {
                         gossipService.setRemoteState(nodeId, "STATUS", "ALIVE");
-                        log.info("Node {} marked ALIVE (heartbeat advanced to {})", nodeId, currentHb);
+                        log.info("Node {} marked ALIVE (generation={}, heartbeat advanced to {})", nodeId, currentGen, currentHb);
                     }
                 } else {
                     // Heartbeat has NOT advanced since last snapshot

@@ -13,13 +13,13 @@ import java.util.concurrent.CancellationException;
 /**
  * Multi-write response for {@link Streamable} service requests over the network.
  *
- * <p>{@link #write(Object) write(T)} encodes the typed response via the service's codec,
+ * {@link #write(Object) write(T)} encodes the typed response via the service's codec,
  * then sends each encoded chunk as a {@code SERVICE_STREAM_DATA} frame.
  * {@link #write(byte[])} sends raw bytes directly without encoding.
  * {@link #close()} sends {@code SERVICE_STREAM_END}.
  * {@link #fail(byte[])} sends {@code SERVICE_STREAM_ERROR}.
  *
- * <p><b>Backpressure:</b> When the caller is on a non-event-loop thread
+ * Backpressure: When the caller is on a non-event-loop thread
  * (which is the normal case for streaming services), this handler blocks
  * with {@code wait()} until the channel is writable. This provides
  * application-level backpressure so memory doesn't spike for large streams.

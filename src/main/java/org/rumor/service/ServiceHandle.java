@@ -26,7 +26,7 @@ public class ServiceHandle {
     /**
      * Cancel the associated service invocation.
      *
-     * <p>Calling this more than once is harmless (only the first call
+     * Calling this more than once is harmless (only the first call
      * takes effect).
      */
     public void cancel() {
