@@ -68,7 +68,7 @@ public class ServiceManager implements ClusterView {
     private final ExecutorService streamExecutor;
 
     // State publishers scheduled for periodic updates
-    private final List<ScheduledFuture<?>> publisherFutures = new ArrayList<>();
+    private final Map<String, List<ScheduledFuture<?>>> publisherFutures = new ConcurrentHashMap<>();
 
     public ServiceManager(ConnectionManager connectionManager, GossipService gossipService,
                           NodeId localId,
@@ -411,6 +411,10 @@ public class ServiceManager implements ClusterView {
 
         PendingRequest pending = pendingRequests.get(requestId);
         if (pending != null) {
+            if (pending.overallTimeout != null) {
+                pending.overallTimeout.cancel(false);
+                pending.overallTimeout = null;
+            }
             pending.resetIdleTimeout(timeoutScheduler, requestIdleTimeoutMs,
                     () -> timeoutRequest(requestId, "Idle timeout (no stream data received within " + requestIdleTimeoutMs + "ms)"));
             pending.onStateChange.accept(new RequestEvent.StreamData<>(data));
@@ -543,6 +547,7 @@ public class ServiceManager implements ClusterView {
         pending.handshakeTimeout = timeoutScheduler.schedule(() -> {
             PendingStream removed = pendingStreams.remove(requestId);
             if (removed != null) {
+                serverSideHandles.remove(requestId);
                 log.warn("Stream handshake timed out for request {}", requestId);
                 sendError(ctx, requestId, "Stream handshake timed out");
             }
@@ -597,7 +602,14 @@ public class ServiceManager implements ClusterView {
             return null;
         });
         activeStreams.put(requestId, task);
-        streamExecutor.execute(task);
+        try {
+            streamExecutor.execute(task);
+        } catch (RejectedExecutionException e) {
+            activeStreams.remove(requestId);
+            serverSideHandles.remove(requestId);
+            log.error("Failed to start stream execution for request {}", requestId, e);
+            sendError(ctx, requestId, "Server capacity exceeded for streams");
+        }
     }
 
     //  Node picking
@@ -634,7 +646,14 @@ public class ServiceManager implements ClusterView {
     //  State publishing
 
     private void scheduleStateKeyMethods(DistributedService service) {
-        String prefix = service.serviceName() + ".";
+        String name = service.serviceName();
+        List<ScheduledFuture<?>> existing = publisherFutures.remove(name);
+        if (existing != null) {
+            for (ScheduledFuture<?> f : existing) f.cancel(false);
+        }
+
+        List<ScheduledFuture<?>> newFutures = new ArrayList<>();
+        String prefix = name + ".";
         for (Method method : service.getClass().getMethods()) {
             StateKey ann = method.getAnnotation(StateKey.class);
             if (ann == null) continue;
@@ -648,8 +667,9 @@ public class ServiceManager implements ClusterView {
                     log.error("Error computing state for key '{}'", qualifiedKey, e);
                 }
             }, 0, STATE_PUBLISH_INTERVAL_MS, TimeUnit.MILLISECONDS);
-            publisherFutures.add(future);
+            newFutures.add(future);
         }
+        publisherFutures.put(name, newFutures);
     }
 
     //  Helpers
@@ -671,8 +691,8 @@ public class ServiceManager implements ClusterView {
     }
 
     public void shutdown() {
-        for (ScheduledFuture<?> f : publisherFutures) {
-            f.cancel(false);
+        for (List<ScheduledFuture<?>> list : publisherFutures.values()) {
+            for (ScheduledFuture<?> f : list) f.cancel(false);
         }
         publisherFutures.clear();
         timeoutScheduler.shutdown();
