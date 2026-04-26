@@ -36,10 +36,11 @@ public class EndpointState {
     }
 
     /**
-     * Returns the maximum version across heartbeat and all app state values.
+     * Returns the maximum version across all app state values.
+     * Separated from heartbeatVersion to avoid version masking.
      */
     public long maxVersion() {
-        long max = heartbeatVersion;
+        long max = 0;
         for (VersionedValue vv : appStates.values()) {
             max = Math.max(max, vv.version());
         }
@@ -47,7 +48,8 @@ public class EndpointState {
     }
 
     public void putAppState(String key, String value) {
-        appStates.put(key, new VersionedValue(value, heartbeatVersion));
+        long version = Math.max(heartbeatVersion, maxVersion() + 1);
+        appStates.put(key, new VersionedValue(value, version));
     }
 
     public void putAppState(String key, String value, long version) {
@@ -70,6 +72,11 @@ public class EndpointState {
             VersionedValue local = appStates.get(entry.getKey());
             if (local == null || entry.getValue().version() > local.version()) {
                 appStates.put(entry.getKey(), entry.getValue());
+            } else if (entry.getValue().version() == local.version()) {
+                // Tie breaker for equal versions
+                if (entry.getValue().value().compareTo(local.value()) > 0) {
+                    appStates.put(entry.getKey(), entry.getValue());
+                }
             }
         }
         if (remote.heartbeatVersion > this.heartbeatVersion) {

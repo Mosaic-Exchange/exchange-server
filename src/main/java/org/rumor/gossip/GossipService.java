@@ -104,6 +104,13 @@ public class GossipService {
             EndpointState local = endpointStateMap.get(localNode);
             local.incrementHeartbeat();
 
+            // Self-healing (Single Writer Principle): If someone told us we are DOWN, forcefully correct it
+            VersionedValue status = local.getAppState("STATUS");
+            if (status != null && !"ALIVE".equals(status.value())) {
+                local.putAppState("STATUS", "ALIVE");
+                log.info("Self-healing: corrected local STATUS back to ALIVE");
+            }
+
             // Pick a random peer to gossip with
             NodeId target = pickGossipTarget();
             if (target == null) {
@@ -265,7 +272,7 @@ public class GossipService {
         for (var entry : endpointStateMap.entrySet()) {
             NodeId nodeId = entry.getKey();
             EndpointState state = entry.getValue();
-            new GossipDigest(nodeId, state.generation(), state.maxVersion()).writeTo(out);
+            new GossipDigest(nodeId, state.generation(), state.maxVersion(), state.heartbeatVersion()).writeTo(out);
         }
 
         out.flush();
@@ -297,12 +304,18 @@ public class GossipService {
             } else if (entry.getValue().generation() < remoteDigest.generation()) {
                 // Remote has a newer generation — request it
                 toRequest.add(entry.getKey());
-            } else if (entry.getValue().maxVersion() > remoteDigest.maxVersion()) {
-                // Same generation, but we have newer data — push it
-                toPush.add(entry);
-            } else if (entry.getValue().maxVersion() < remoteDigest.maxVersion()) {
-                // Same generation, but remote has newer data — request it
-                toRequest.add(entry.getKey());
+            } else {
+                boolean shouldPush = entry.getValue().maxVersion() > remoteDigest.maxVersion() ||
+                                     entry.getValue().heartbeatVersion() > remoteDigest.heartbeatVersion();
+                boolean shouldRequest = entry.getValue().maxVersion() < remoteDigest.maxVersion() ||
+                                        entry.getValue().heartbeatVersion() < remoteDigest.heartbeatVersion();
+
+                if (shouldPush) {
+                    toPush.add(entry);
+                }
+                if (shouldRequest) {
+                    toRequest.add(entry.getKey());
+                }
             }
         }
 
