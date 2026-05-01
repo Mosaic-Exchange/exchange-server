@@ -248,6 +248,15 @@ public class ServiceManager implements ClusterView {
         sendRequestTo(target, serviceName, request, onStateChange, handle);
     }
 
+    /**
+     * Send a request directly to a specific node, bypassing peer discovery.
+     * Used for targeted dispatch when the caller knows exactly which node to use.
+     */
+    public void sendRequestToNode(String serviceName, byte[] request, NodeId targetNode,
+                                   OnStateChange<byte[]> onStateChange, ServiceHandle handle) {
+        sendRequestTo(targetNode, serviceName, request, onStateChange, handle);
+    }
+
     private void sendRequestTo(NodeId target, String serviceName, byte[] request,
                                 OnStateChange<byte[]> onStateChange, ServiceHandle handle) {
         try {

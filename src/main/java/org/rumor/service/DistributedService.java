@@ -1,5 +1,7 @@
 package org.rumor.service;
 
+import org.rumor.gossip.NodeId;
+
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
@@ -191,6 +193,44 @@ public abstract class DistributedService<Req, Resp> {
 
         ServiceHandle handle = new ServiceHandle();
         manager.sendRequest(serviceName(), encoded, rawCallback, peerFilter, handle);
+        return handle;
+    }
+
+    /**
+     * Dispatches a request to a specific remote node, bypassing peer discovery.
+     * Use this when the caller knows exactly which node should handle the request
+     * (e.g. remote inference targeting the node that owns a specific adapter).
+     *
+     * @param request       the request object
+     * @param targetNode    the specific node to send to
+     * @param onStateChange called when request events occur
+     * @return a handle that can be used to cancel the request
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public ServiceHandle dispatchToNode(Req request, NodeId targetNode, OnStateChange<Resp> onStateChange) {
+        if (manager == null) {
+            throw new IllegalStateException("Service not registered. Call rumor.register() first.");
+        }
+        byte[] encoded = requestCodec.encode(request);
+
+        OnStateChange<byte[]> rawCallback = event -> {
+            if (event instanceof RequestEvent.Succeeded s) {
+                byte[] data = s.raw();
+                Object decoded = data != null ? responseCodec.decode(data) : null;
+                onStateChange.accept(new RequestEvent.Succeeded(decoded));
+            } else if (event instanceof RequestEvent.StreamData sd) {
+                onStateChange.accept(new RequestEvent.StreamData(responseCodec.decode(sd.raw())));
+            } else if (event instanceof RequestEvent.Processing) {
+                onStateChange.accept(new RequestEvent.Processing());
+            } else if (event instanceof RequestEvent.Failed f) {
+                onStateChange.accept(new RequestEvent.Failed(f.reason()));
+            } else if (event instanceof RequestEvent.Cancelled) {
+                onStateChange.accept(new RequestEvent.Cancelled());
+            }
+        };
+
+        ServiceHandle handle = new ServiceHandle();
+        manager.sendRequestToNode(serviceName(), encoded, targetNode, rawCallback, handle);
         return handle;
     }
 
